@@ -26,6 +26,16 @@ st.markdown(
 )
 
 # ==========================================
+# FUNCIÓN OPTIMIZADA CON CACHÉ DE STREAMLIT
+# ==========================================
+# Esto evita que la app vuelva a llamar a la API o recargue archivos pesados
+# innecesariamente cada vez que interactúas con la interfaz.
+@st.cache_data(ttl=3600, show_spinner="Cargando y sincronizando datos...")
+def obtener_datos_cacheados(token_api, modo_datos):
+    return utils.cargar_datos_inteligente(token_api, modo_datos)
+
+
+# ==========================================
 # BARRA LATERAL: ORDEN SOLICITADO
 # ==========================================
 
@@ -50,8 +60,8 @@ st.sidebar.markdown(f"""
 modo_datos_default = "🌐 En Vivo (API Banco Central)"
 token_api_default = st.secrets.get("BCCH_TOKEN", "")
 
-# 3. Carga inicial de datos para las tarjetas superiores
-df_ipc, df_eee, df_uf, df_eur, estado_fuente = utils.cargar_datos_inteligente(token_api_default, modo_datos_default)
+# 3. Carga inicial optimizada con caché
+df_ipc, df_eee, df_uf, df_eur, estado_fuente = obtener_datos_cacheados(token_api_default, modo_datos_default)
 
 # 4. Tarjeta Paridad EUR/CLP
 val_eur_hoy = 0.0
@@ -124,9 +134,9 @@ if modo_datos == "🌐 En Vivo (API Banco Central)":
     else:
         token_api = st.sidebar.text_input("Token API Banco Central", type="password", help="Ingresa tu token de la BDE del Banco Central")
 
-# Recarga condicional si el usuario cambia de fuente o token
+# Recarga condicional usando el sistema con caché si cambia de fuente o token
 if modo_datos != modo_datos_default or token_api != token_api_default:
-    df_ipc, df_eee, df_uf, df_eur, estado_fuente = utils.cargar_datos_inteligente(token_api, modo_datos)
+    df_ipc, df_eee, df_uf, df_eur, estado_fuente = obtener_datos_cacheados(token_api, modo_datos)
 
 st.sidebar.markdown("---")
 
