@@ -4,6 +4,9 @@ import datetime
 from pathlib import Path
 import utils 
 
+# ==========================================
+# CONFIGURACIÓN DE PÁGINA
+# ==========================================
 st.set_page_config(
     page_title="Simulador de Reajuste de Arriendos",
     page_icon="🏠",
@@ -14,8 +17,8 @@ st.markdown(
     """
     <style>
         [data-testid="stSidebar"] {
-            min-width: 350px; /* Ancho mínimo de la barra lateral */
-            max-width: 400px; /* Ancho máximo */
+            min-width: 350px;
+            max-width: 400px;
         }
     </style>
     """,
@@ -23,13 +26,16 @@ st.markdown(
 )
 
 # ==========================================
-# BARRA LATERAL (INPUTS DE USUARIO) Y FUENTE
+# BARRA LATERAL: ORDEN SOLICITADO
 # ==========================================
+
+# 1. Título ¡Bienvenido!
 st.sidebar.markdown(
     "<h1 style='text-align: center; font-size: 28px; color: #202124;'>🏠 ¡Bienvenido! 🎯</h1>", 
     unsafe_allow_html=True
 )
 
+# 2. Tarjeta Fecha de Consulta
 st.sidebar.markdown(f"""
     <div style="background-color: #e8f0fe; padding: 12px 15px; border-radius: 8px; border: 1px solid #d2e3fc; display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
         <span style="font-size: 28px; line-height: 1;">📅</span>
@@ -40,9 +46,64 @@ st.sidebar.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
+# Precarga inicial para mostrar las tarjetas superiores antes del selector de fuente
+modo_datos_default = "🌐 En Vivo (API Banco Central)"
+token_api_default = st.secrets.get("BCCH_TOKEN", "")
+df_ipc, df_eee, df_uf, df_eur, estado_fuente = utils.cargar_datos_inteligente(token_api_default, modo_datos_default)
+
+# 3. Tarjeta Paridad EUR/CLP
+val_eur_hoy = 0.0
+try:
+    if df_eur is not None and not df_eur.empty:
+        val_eur_hoy = float(df_eur["valor_eur"].iloc[0])
+except Exception:
+    val_eur_hoy = 0.0
+
+eur_txt = f"${val_eur_hoy:,.2f} CLP" if val_eur_hoy > 0 else "No disponible"
+
+st.sidebar.markdown(f"""
+    <div style="background-color: #e8f0fe; padding: 12px 15px; border-radius: 8px; border: 1px solid #d2e3fc; display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
+        <span style="font-size: 28px; line-height: 1;">💶</span>
+        <div>
+            <div style="font-size: 13px; color: #174ea6; font-weight: bold;">Paridad EUR/CLP:</div>
+            <div style="font-size: 16px; color: #202124; font-weight: bold; margin-top: 2px;">{eur_txt}</div>
+        </div>
+    </div>
+""", unsafe_allow_html=True)
+
+# 4. Tarjeta Valor UF 
+val_uf_hoy = 0.0
+try:
+    if df_uf is not None and not df_uf.empty:
+        df_uf_temp = df_uf.copy()
+        if not isinstance(df_uf_temp.index, pd.DatetimeIndex):
+            df_uf_temp.index = pd.to_datetime(df_uf_temp.index)
+        
+        f_corte_dt = pd.to_datetime(datetime.date.today())
+        df_uf_corte = df_uf_temp[df_uf_temp.index <= f_corte_dt].dropna(subset=["valor_uf"])
+        
+        if not df_uf_corte.empty:
+            val_uf_hoy = float(df_uf_corte["valor_uf"].iloc[-1])
+        else:
+            val_uf_hoy = float(df_uf_temp.dropna(subset=["valor_uf"])["valor_uf"].iloc[-1])
+except Exception:
+    val_uf_hoy = 0.0
+
+uf_txt = f"${val_uf_hoy:,.2f} CLP" if val_uf_hoy > 0 else "No disponible"
+
+st.sidebar.markdown(f"""
+    <div style="background-color: #e8f0fe; padding: 12px 15px; border-radius: 8px; border: 1px solid #d2e3fc; display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
+        <span style="font-size: 28px; line-height: 1;">🇨🇱</span>
+        <div>
+            <div style="font-size: 13px; color: #174ea6; font-weight: bold;">Valor UF:</div>
+            <div style="font-size: 16px; color: #202124; font-weight: bold; margin-top: 2px;">{uf_txt}</div>
+        </div>
+    </div>
+""", unsafe_allow_html=True)
+
 st.sidebar.markdown("---")
 
-# Selector de fuente
+# 5. Selector de Fuente de Datos y Token
 st.sidebar.markdown("<p style='font-size: 16px; font-weight: bold; color: #202124; margin-bottom: 5px;'>Fuente de Datos</p>", unsafe_allow_html=True)
 modo_datos = st.sidebar.radio("", ["🌐 En Vivo (API Banco Central)", "📁 Local (Archivos CSV)"], index=0, label_visibility="collapsed")
 st.sidebar.markdown("""
@@ -61,14 +122,17 @@ if modo_datos == "🌐 En Vivo (API Banco Central)":
     else:
         token_api = st.sidebar.text_input("Token API Banco Central", type="password", help="Ingresa tu token de la BDE del Banco Central")
 
+# Recarga condicional si el usuario cambia de fuente o token
+if modo_datos != modo_datos_default or token_api != token_api_default:
+    df_ipc, df_eee, df_uf, df_eur, estado_fuente = utils.cargar_datos_inteligente(token_api, modo_datos)
+
 st.sidebar.markdown("---")
 
-# Formulario unificado con valores por defecto en CLP y validaciones
+# 6. Formulario de Condiciones del Contrato
 with st.sidebar.form("form_contrato"):
     st.subheader("📜 Condiciones del Contrato")
     st.markdown("**¿Te gustaría saber en cuánto se podría reajustar tu arriendo?**<br>Ingresa los siguientes datos:", unsafe_allow_html=True)
 
-    # index=1 selecciona "CLP" por defecto para que aparezca el reajuste al tiro
     moneda_contrato = st.selectbox("Moneda del Contrato", ["UF", "CLP"], index=1)
 
     if moneda_contrato == "UF":
@@ -100,7 +164,11 @@ with st.sidebar.form("form_contrato"):
     
     submitted = st.form_submit_button("Calcular Reajuste 🔍")
 
-# Mensaje al final de la barra lateral
+# 7. Estado de la fuente
+st.sidebar.markdown("---")
+st.sidebar.caption(f"**Estado:** {estado_fuente}")
+
+# 8. Pie de página barra lateral
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
     <div style='text-align: center; font-size: 12px; color: #5f6368; padding: 10px;'>
@@ -112,18 +180,9 @@ st.sidebar.markdown("""
 
 
 # ==========================================
-# CARGA DE DATOS (HÍBRIDA: LOCAL VS API)
-# ==========================================
-df_ipc, df_eee, df_uf, estado_fuente = utils.cargar_datos_inteligente(token_api, modo_datos)
-
-st.sidebar.markdown("---")
-st.sidebar.caption(f"**Estado:** {estado_fuente}")
-
-# ==========================================
-# INTERFAZ PRINCIPAL CON CONTROLADOR 'submitted'
+# INTERFAZ PRINCIPAL
 # ==========================================
 if not submitted:
-    # Pantalla en blanco / de bienvenida inicial antes de pulsar calcular
     st.markdown("""
         <div style="background: linear-gradient(135deg, #e8f0fe 0%, #f1f3f4 100%); padding: 50px 30px; border-radius: 12px; border: 1px solid #d2e3fc; text-align: center; margin-top: 40px; box-shadow: 0 4px 6px rgba(0,0,0,0.02);">
             <h1 style='color: #174ea6; margin-bottom: 15px;'>🏠 Simulador Inteligente de Reajuste de Arriendos</h1>
@@ -135,7 +194,6 @@ if not submitted:
     """, unsafe_allow_html=True)
 
 else:
-    # Se ejecuta todo el motor de análisis y gráficos solo tras hacer clic
     col_eee = df_eee.columns[0]
     ts_ipc = df_ipc["variacion_ipc"]
     f_fecha_corte = pd.to_datetime("today").normalize()

@@ -24,12 +24,14 @@ def cargar_datos_locales():
         path_uf = os.path.join(RESPALDO_DIR, "1. uf_historica.csv")
         path_ipc = os.path.join(RESPALDO_DIR, "2. ipc_historico.csv")
         path_eee = os.path.join(RESPALDO_DIR, "5. exp_ipc.csv")
+        path_eur = os.path.join(RESPALDO_DIR, "eur_historico.csv")
 
         df_uf = pd.read_csv(path_uf, parse_dates=["fecha"], index_col="fecha").asfreq("MS")
         df_ipc = pd.read_csv(path_ipc, parse_dates=["fecha"], index_col="fecha").asfreq("MS")
         df_eee = pd.read_csv(path_eee)
+        df_eur = pd.read_csv(path_eur, parse_dates=["fecha"], index_col="fecha") if os.path.exists(path_eur) else pd.DataFrame(columns=["valor_eur"])
         
-        return df_ipc, df_eee, df_uf
+        return df_ipc, df_eee, df_uf, df_eur
     except Exception as e:
         raise FileNotFoundError(f"No se pudieron leer los CSV locales en 'Respaldo local': {e}")
 
@@ -65,8 +67,17 @@ def cargar_datos_en_vivo(token_api):
         nombres=["exp_ipc"]
     )
     df_eee.index = pd.to_datetime(df_eee.index)
-    
-    return df_ipc, df_eee, df_uf
+
+    # Serie EUR/CLP en vivo
+    df_eur = siete.cuadro(
+        series=["F072.CLP.EUR.N.O.D"],
+        nombres=["valor_eur"]
+        )
+    df_eur.index = pd.to_datetime(df_eur.index)
+    df_eur = df_eur.sort_index(ascending=False)
+
+
+    return df_ipc, df_eee, df_uf, df_eur
 
 def cargar_datos_inteligente(token_api, modo_seleccionado):
     """
@@ -84,21 +95,22 @@ def cargar_datos_inteligente(token_api, modo_seleccionado):
     df_ipc = None
     df_eee = None
     df_uf = None
+    df_eur = None
     estado_fuente = "Local"
 
     if modo_seleccionado == "🌐 En Vivo (API Banco Central)" and token_api:
         try:
-            df_ipc, df_eee, df_uf = cargar_datos_en_vivo(token_api)
+            df_ipc, df_eee, df_uf, df_eur = cargar_datos_en_vivo(token_api)
             estado_fuente = "En Vivo (API Banco Central de Chile)"
         except Exception as e:
             st.warning(f"⚠️ No hay conexión con la API ({e}). Usando respaldo local...")
-            df_ipc, df_eee, df_uf = cargar_datos_locales()
+            df_ipc, df_eee, df_uf, df_eur = cargar_datos_locales()
             estado_fuente = "Local (Por falla de API)"
     else:
-        df_ipc, df_eee, df_uf = cargar_datos_locales()
+        df_ipc, df_eee, df_uf, df_eur = cargar_datos_locales()
         estado_fuente = "Local (Archivos CSV)"
 
-    return df_ipc, df_eee, df_uf, estado_fuente
+    return df_ipc, df_eee, df_uf, df_eur, estado_fuente
 
 
 # ------------------------------------------------------------------------------
