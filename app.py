@@ -46,12 +46,14 @@ st.sidebar.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# Precarga inicial para mostrar las tarjetas superiores antes del selector de fuente
+# Definimos las variables por defecto antes de la carga para evitar errores
 modo_datos_default = "🌐 En Vivo (API Banco Central)"
 token_api_default = st.secrets.get("BCCH_TOKEN", "")
+
+# 3. Carga inicial de datos para las tarjetas superiores
 df_ipc, df_eee, df_uf, df_eur, estado_fuente = utils.cargar_datos_inteligente(token_api_default, modo_datos_default)
 
-# 3. Tarjeta Paridad EUR/CLP
+# 4. Tarjeta Paridad EUR/CLP
 val_eur_hoy = 0.0
 try:
     if df_eur is not None and not df_eur.empty:
@@ -71,7 +73,7 @@ st.sidebar.markdown(f"""
     </div>
 """, unsafe_allow_html=True)
 
-# 4. Tarjeta Valor UF 
+# 5. Tarjeta Valor UF (Con fecha de corte y bandera chilena 🇨🇱)
 val_uf_hoy = 0.0
 try:
     if df_uf is not None and not df_uf.empty:
@@ -95,7 +97,7 @@ st.sidebar.markdown(f"""
     <div style="background-color: #e8f0fe; padding: 12px 15px; border-radius: 8px; border: 1px solid #d2e3fc; display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
         <span style="font-size: 28px; line-height: 1;">🇨🇱</span>
         <div>
-            <div style="font-size: 13px; color: #174ea6; font-weight: bold;">Valor UF:</div>
+            <div style="font-size: 13px; color: #174ea6; font-weight: bold;">Valor UF (Fecha de corte):</div>
             <div style="font-size: 16px; color: #202124; font-weight: bold; margin-top: 2px;">{uf_txt}</div>
         </div>
     </div>
@@ -103,7 +105,7 @@ st.sidebar.markdown(f"""
 
 st.sidebar.markdown("---")
 
-# 5. Selector de Fuente de Datos y Token
+# 6. Selector de Fuente de Datos y Token
 st.sidebar.markdown("<p style='font-size: 16px; font-weight: bold; color: #202124; margin-bottom: 5px;'>Fuente de Datos</p>", unsafe_allow_html=True)
 modo_datos = st.sidebar.radio("", ["🌐 En Vivo (API Banco Central)", "📁 Local (Archivos CSV)"], index=0, label_visibility="collapsed")
 st.sidebar.markdown("""
@@ -128,7 +130,7 @@ if modo_datos != modo_datos_default or token_api != token_api_default:
 
 st.sidebar.markdown("---")
 
-# 6. Formulario de Condiciones del Contrato
+# 7. Formulario de Condiciones del Contrato
 with st.sidebar.form("form_contrato"):
     st.subheader("📜 Condiciones del Contrato")
     st.markdown("**¿Te gustaría saber en cuánto se podría reajustar tu arriendo?**<br>Ingresa los siguientes datos:", unsafe_allow_html=True)
@@ -164,11 +166,11 @@ with st.sidebar.form("form_contrato"):
     
     submitted = st.form_submit_button("Calcular Reajuste 🔍")
 
-# 7. Estado de la fuente
+# 8. Estado de la fuente
 st.sidebar.markdown("---")
 st.sidebar.caption(f"**Estado:** {estado_fuente}")
 
-# 8. Pie de página barra lateral
+# 9. Pie de página barra lateral
 st.sidebar.markdown("---")
 st.sidebar.markdown("""
     <div style='text-align: center; font-size: 12px; color: #5f6368; padding: 10px;'>
