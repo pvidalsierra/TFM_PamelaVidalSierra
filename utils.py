@@ -21,17 +21,17 @@ def cargar_datos_locales():
     Carga los archivos CSV desde la subcarpeta 'Respaldo local'.
     """
     try:
-        path_uf = os.path.join(RESPALDO_DIR, "1. uf_historica.csv")
-        path_ipc = os.path.join(RESPALDO_DIR, "2. ipc_historico.csv")
-        path_eee = os.path.join(RESPALDO_DIR, "5. exp_ipc.csv")
-        path_eur = os.path.join(RESPALDO_DIR, "eur_historico.csv")
+        path_uf = os.path.join(RESPALDO_DIR, "uf_historica.csv")
+        path_ipc = os.path.join(RESPALDO_DIR, "ipc_historico.csv")
+        path_eee = os.path.join(RESPALDO_DIR, "exp_ipc_eee.csv")
+        path_eur = os.path.join(RESPALDO_DIR, "eurclp_historico.csv")
 
         df_uf = pd.read_csv(path_uf, parse_dates=["fecha"], index_col="fecha").asfreq("MS")
         df_ipc = pd.read_csv(path_ipc, parse_dates=["fecha"], index_col="fecha").asfreq("MS")
-        df_eee = pd.read_csv(path_eee)
+        df_eee_aux = pd.read_csv(path_eee)
         df_eur = pd.read_csv(path_eur, parse_dates=["fecha"], index_col="fecha") if os.path.exists(path_eur) else pd.DataFrame(columns=["valor_eur"])
         
-        return df_ipc, df_eee, df_uf, df_eur
+        return df_ipc, df_eee_aux, df_uf, df_eur
     except Exception as e:
         raise FileNotFoundError(f"No se pudieron leer los CSV locales en 'Respaldo local': {e}")
 
@@ -62,27 +62,26 @@ def cargar_datos_en_vivo(token_api):
     df_ipc.index = pd.to_datetime(df_ipc.index)
     
     # Expectativas IPC (EEE)
-    df_eee = siete.cuadro(
+    df_eee_aux = siete.cuadro(
         series=["F089.IPC.VAR.24.M"],
-        nombres=["exp_ipc"]
+        nombres=["exp_ipc_eee"]
     )
-    df_eee.index = pd.to_datetime(df_eee.index)
+    df_eee_aux.index = pd.to_datetime(df_eee_aux.index)
 
-    # Serie EUR/CLP en vivo
+    # Serie EUR/CLP
     df_eur = siete.cuadro(
         series=["F072.CLP.EUR.N.O.D"],
-        nombres=["valor_eur"]
+        nombres=["eurclp"]
         )
     df_eur.index = pd.to_datetime(df_eur.index)
-    df_eur = df_eur.sort_index(ascending=False)
+    df_eur = df_eur.sort_index(ascending=True)
 
-
-    return df_ipc, df_eee, df_uf, df_eur
+    return df_ipc, df_eee_aux, df_uf, df_eur
 
 def cargar_datos_inteligente(token_api, modo_seleccionado):
     """
     Función maestra: Intenta API si está seleccionada. 
-    Si no pasaste token, lo busca automáticamente en st.secrets['BCCH_TOKEN'].
+    Si no tiene acceso a token, lo busca automáticamente en st.secrets['BCCH_TOKEN'].
     Si falla o se elige local, recurre a la carpeta 'Respaldo local'.
     """
     # Si el token viene vacío, intentamos rescatarlo desde los secretos de Streamlit
@@ -93,24 +92,24 @@ def cargar_datos_inteligente(token_api, modo_seleccionado):
             token_api = ""
 
     df_ipc = None
-    df_eee = None
+    df_eee_aux= None
     df_uf = None
     df_eur = None
     estado_fuente = "Local"
 
     if modo_seleccionado == "🌐 En Vivo (API Banco Central)" and token_api:
         try:
-            df_ipc, df_eee, df_uf, df_eur = cargar_datos_en_vivo(token_api)
+            df_ipc, df_eee_aux, df_uf, df_eur = cargar_datos_en_vivo(token_api)
             estado_fuente = "En Vivo (API Banco Central de Chile)"
         except Exception as e:
             st.warning(f"⚠️ No hay conexión con la API ({e}). Usando respaldo local...")
-            df_ipc, df_eee, df_uf, df_eur = cargar_datos_locales()
+            df_ipc, df_eee_aux, df_uf, df_eur = cargar_datos_locales()
             estado_fuente = "Local (Por falla de API)"
     else:
-        df_ipc, df_eee, df_uf, df_eur = cargar_datos_locales()
+        df_ipc, df_eee_aux, df_uf, df_eur = cargar_datos_locales()
         estado_fuente = "Local (Archivos CSV)"
 
-    return df_ipc, df_eee, df_uf, df_eur, estado_fuente
+    return df_ipc, df_eee_aux, df_uf, df_eur, estado_fuente
 
 
 # ------------------------------------------------------------------------------
@@ -137,58 +136,84 @@ color_pesimista = "#CC6677"  # Rosa coral
 color_rango = '#88CCEE'      # Rango incertidumbre (#88CCEE en rgba es 136, 204, 238)
 color_aux = "#E69F00"        # Color para mostrar proyecciones
 
+
+
 # ==============================================================================
 # FUNCIÓN PARA VERIFICAR FECHA DE INICIO DEL CONTRATO INGRESADA
 # ==============================================================================
 
-def validar_fecha_inicio(fecha_str, f_fecha_corte):
+def validar_fecha_inicio(fecha_inicio_str, fecha_consulta_str):
     try:
-        f_inicio = pd.to_datetime(fecha_str)
+        fecha_inicio = pd.to_datetime(fecha_inicio_str)
     except Exception as e:
-        raise ValueError(f"Formato de fecha inválido: '{fecha_str}'. Use 'YYYY-MM-DD'.")
+        raise ValueError(f"Formato de fecha inválido: '{fecha_inicio_str}'. Use 'YYYY-MM-DD'.")
 
     # ==============================================================================
-    # Validar límite histórico razonable (datos desde 2000)
+    # Validar límite histórico razonable (datos desde 2001)
     # ==============================================================================
-    f_corte = pd.to_datetime(f_fecha_corte)
-    if f_inicio > f_corte:
-        raise ValueError(f"La fecha de inicio ({fecha_str}) no puede ser posterior a hoy ({f_fecha_corte}).")
-    if f_inicio < pd.to_datetime("2000-01-01"):
+    fecha_consulta = pd.to_datetime(fecha_consulta_str)
+    if fecha_inicio > fecha_consulta:
+        raise ValueError(f"La fecha de inicio ({fecha_inicio_str}) no puede ser posterior a hoy ({fecha_consulta_str}).")
+    if fecha_inicio < pd.to_datetime("2001-08-31"):
         raise ValueError("La fecha de inicio es demasiado antigua (mínimo 2000-01-01).")
-    return f_inicio
+    return fecha_inicio
+
+# ==============================================================================
+# DEPURAR EEE
+# ==============================================================================
+def transformar_df_eee(df_eee_aux):
+    df_eee = df_eee_aux.copy()
+    
+    # 1. Si la fecha por alguna razón está en el índice, la pasamos a columna
+    if 'fecha' not in df_eee.columns and 'fecha' in df_eee.index.names or isinstance(df_eee.index, pd.DatetimeIndex):
+        df_eee = df_eee.reset_index()
+    
+    # 2. Limpiar nombres de columnas por si tienen espacios o mayúsculas
+    df_eee.columns = [str(col).strip().lower() for col in df_eee.columns]
+    
+    # 3. Si aun así no encuentra la columna 'fecha', tomamos la primera columna del DataFrame como fecha
+    if 'fecha' not in df_eee.columns:
+        # Renombramos la primera columna a 'fecha' por seguridad
+        primer_columna = df_eee.columns[0]
+        df_eee.rename(columns={primer_columna: 'fecha'}, inplace=True)
+    
+    # 4. Transformaciones estándar
+    df_eee['fecha'] = pd.to_datetime(df_eee['fecha'])
+    df_eee['fecha'] = df_eee['fecha'] + pd.DateOffset(months=1)
+    df_eee.set_index('fecha', inplace=True)
+
+    col_eee = df_eee.columns[0]
+    df_eee[col_eee] = pd.to_numeric(df_eee[col_eee], errors='coerce')
+    
+    return df_eee
 
 # ==============================================================================
 # PROYECCIÓN EEE
 # ==============================================================================
-def obtener_proyeccion_eee(eee_data, fecha_corte, col_eee):
-    f_corte_dt = pd.to_datetime(fecha_corte)
-    if f_corte_dt.day >= 13:
-        mes_encuesta_disponible = f_corte_dt.replace(day=1)
-    else:
-        mes_encuesta_disponible = (f_corte_dt - pd.DateOffset(months=1)).replace(day=1)
-
-    df_eval = eee_data.loc[:mes_encuesta_disponible]
+def proyectar_eee(df_eee_input, mes_objetivo_eee, col_eee):
+    df_eval = df_eee_input.loc[:mes_objetivo_eee]
     if df_eval.empty:
-        raise ValueError(f"No hay datos de EEE disponibles a la fecha de corte {fecha_corte}.")
+        raise ValueError(f"No hay datos de EEE disponibles hasta la fecha objetivo {mes_objetivo_eee.strftime('%Y-%m-%d')}.")
     
-    fecha_encuesta_objetivo = f_corte_dt.replace(day=1) - pd.DateOffset(months=1)
-    if fecha_encuesta_objetivo in df_eval.index:
-        valor_exp = float(df_eval.loc[fecha_encuesta_objetivo, col_eee])
+    if mes_objetivo_eee in df_eval.index:
+        valor_exp = float(df_eval.loc[mes_objetivo_eee, col_eee])
     else:
         val_idx = -2 if len(df_eval) >= 2 else -1
         valor_exp = float(df_eval[col_eee].iloc[val_idx])
 
-    mes_proyectado = fecha_encuesta_objetivo + pd.DateOffset(months=1)
+    mes_proyectado = mes_objetivo_eee
+    
     return pd.DataFrame({'ipc_proyectado': [valor_exp]}, index=[mes_proyectado])
 
 # ==============================================================================
 # PROYECCIÓN SARIMA
 # ==============================================================================
-def proyectar_sarimax(ts_ipc_data, pasos, fecha_corte, config):
-    f_corte_dt = pd.to_datetime(fecha_corte)
-    ts_eval = ts_ipc_data.loc[:f_corte_dt].copy()
+def proyectar_sarimax(ts_ipc_input, pasos, fecha_consulta_str, config):
+    fecha_consulta = pd.to_datetime(fecha_consulta_str)
+    ts_eval = ts_ipc_input.loc[:fecha_consulta].copy()
+
     if ts_eval.empty:
-        raise ValueError(f"No hay datos disponibles para la fecha de corte: {fecha_corte}")
+        raise ValueError(f"No hay datos disponibles para la fecha de consulta proporcionada: {fecha_consulta}")
 
     modelo = SARIMAX(
         ts_eval,
@@ -199,6 +224,7 @@ def proyectar_sarimax(ts_ipc_data, pasos, fecha_corte, config):
     )
     resultado = modelo.fit(disp=False)
     proyeccion = resultado.forecast(steps=pasos)
+
     proyeccion.index = pd.date_range(start=ts_eval.index[-1] + pd.offsets.MonthBegin(1), periods=pasos, freq='MS')
     proyeccion.name = 'ipc_proyectado'
     return proyeccion
@@ -206,10 +232,10 @@ def proyectar_sarimax(ts_ipc_data, pasos, fecha_corte, config):
 # ==============================================================================
 # CALENDARIOS DE REAJUSTES
 # ==============================================================================
-def generar_calendario_clp(fecha_inicio_contrato, frecuencia_meses, f_fecha_corte):
-    f_inicio = pd.to_datetime(fecha_inicio_contrato)
-    f_corte = pd.to_datetime(f_fecha_corte)
-    anio, mes = f_inicio.year, f_inicio.month + 1
+def generar_calendario_clp(fecha_inicio_contrato_str, frecuencia_meses, fecha_consulta_str):
+    fecha_consulta = pd.to_datetime(fecha_consulta_str)
+    fecha_inicio_contrato = pd.to_datetime(fecha_inicio_contrato_str)
+    anio, mes = fecha_inicio_contrato.year, fecha_inicio_contrato.month + 1
     if mes > 12:
         mes = 1
         anio += 1
@@ -217,7 +243,7 @@ def generar_calendario_clp(fecha_inicio_contrato, frecuencia_meses, f_fecha_cort
     cursor_inicio = pd.Timestamp(year=anio, month=mes, day=1)
     calendario_clp = []
 
-    while cursor_inicio <= f_corte:
+    while cursor_inicio <= fecha_consulta:
         anio_siguiente, mes_siguiente = cursor_inicio.year, cursor_inicio.month + frecuencia_meses
         while mes_siguiente > 12:
             mes_siguiente -= 12
@@ -242,11 +268,11 @@ def generar_calendario_clp(fecha_inicio_contrato, frecuencia_meses, f_fecha_cort
 
     return pd.DataFrame(calendario_clp)
 
-def generar_calendario_uf(fecha_inicio_contrato, f_fecha_corte):
-    f_inicio = pd.to_datetime(fecha_inicio_contrato)
-    f_corte = pd.to_datetime(f_fecha_corte)
-    f_limite_proyeccion = f_corte + pd.DateOffset(months=12)
-    cursor_inicio = pd.Timestamp(year=f_inicio.year, month=f_inicio.month, day=1)
+def generar_calendario_uf(fecha_inicio_contrato_str, fecha_consulta_str):
+    fecha_consulta = pd.to_datetime(fecha_consulta_str)
+    fecha_inicio_contrato = pd.to_datetime(fecha_inicio_contrato_str)
+    f_limite_proyeccion = fecha_consulta + pd.DateOffset(months=12)
+    cursor_inicio = pd.Timestamp(year=fecha_inicio_contrato.year, month=fecha_inicio_contrato.month, day=1)
     calendario_uf = []
 
     while cursor_inicio <= f_limite_proyeccion:
@@ -262,86 +288,263 @@ def generar_calendario_uf(fecha_inicio_contrato, f_fecha_corte):
     return pd.DataFrame(calendario_uf)
 ### CALENDARIO_REAJUSTES SE ARMA EN APP.PY
 
+    
 # ==============================================================================
 # FUNCIÓN DE PROYECCIÓN HÍBRIDA ➔ HISTORIAL Y PROYECCIÓN DE CONTRATO (SARIMA + EEE)
 # ==============================================================================
-def calcular_historial_y_proyeccion_contrato(calendario_df, df_ipc, df_eee, ts_ipc, f_corte, f_ipc_real_limite, moneda_contrato, col_eee):
+def calcular_historial_y_proyeccion_contrato(calendario_df, df_ipc_input, df_eee_input,
+                                             ts_mensual_ipc_input, fecha_consulta, 
+                                             fecha_disponible_IPCreal):
+    """
+    Calcula el historial de tramos contractuales y realiza la proyección híbrida del IPC
+    utilizando SARIMA de forma 100% monolítica, usando exclusivamente acumulación por suma.
+    """
     resultados_tramos = []
-    df_proy_hibrida = pd.DataFrame(columns=["variacion_ipc"])
-    capturo_proyeccion = False
+    todos_meses_proyectados = []
+    todas_fechas_proyectadas = []
+    global_eee_asignado = False
 
-    df_ipc_nat = df_ipc.copy()
-    if not isinstance(df_ipc_nat.index, pd.DatetimeIndex):
-        df_ipc_nat.index = pd.to_datetime(df_ipc_nat.index)
-    df_ipc_nat["variacion_ipc"] = df_ipc_nat["variacion_ipc"].astype(float)
+    # 1. Asegurar tipos de fecha y formatos base en los inputs
+    if not isinstance(df_ipc_input.index, pd.DatetimeIndex):
+        df_ipc_input.index = pd.to_datetime(df_ipc_input.index)
+    if "variacion_ipc" in df_ipc_input.columns:
+        df_ipc_input["variacion_ipc"] = df_ipc_input["variacion_ipc"].astype(float)
 
-    df_eee_nat = df_eee.copy()
-    if not isinstance(df_eee_nat.index, pd.DatetimeIndex):
-        df_eee_nat.index = pd.to_datetime(df_eee_nat.index)
+    if not isinstance(df_eee_input.index, pd.DatetimeIndex):
+        df_eee_input.index = pd.to_datetime(df_eee_input.index)
 
-  # ------------------------------------------------------------------------------
-  # Función que permite buscar la EEE desfasada respetando la temporalidad
-  # ------------------------------------------------------------------------------
+    fecha_consulta_dt = pd.to_datetime(fecha_consulta)
+    fecha_limite_efectivo = pd.to_datetime(fecha_disponible_IPCreal)
 
-    def obtener_eee_para_mes(fecha_objetivo):
-        fecha_ref = fecha_objetivo - pd.DateOffset(months=1)
-        match = df_eee_nat[(df_eee_nat.index.year == fecha_ref.year) & (df_eee_nat.index.month == fecha_ref.month)]
-        if not match.empty:
-            return float(match.iloc[0][col_eee] if col_eee in match.columns else match.iloc[0, 0])
-        if fecha_ref in df_eee_nat.index:
-            val = df_eee_nat.loc[fecha_ref]
-            return float(val.iloc[0] if isinstance(val, pd.Series) else val)
-        return None
+    # 2. Extracción directa de la EEE (h=1) si existe la variable global
+    mes_h1_eee = fecha_consulta.replace(day=1)
+    val_eee_h1 = None
+    val_eee_h1 = float(df_eee_input.loc[mes_h1_eee, df_eee_input.columns[0]])
 
-    f_corte_dt = pd.to_datetime(f_corte)
-    mes_objetivo_eee = f_corte_dt.replace(day=1) if f_corte_dt.day >= 13 else (f_corte_dt - pd.DateOffset(months=1)).replace(day=1)
+    # 3. Serie local y ejecución directa de la proyección SARIMA
+    ts_ipc_consulta_local = ts_mensual_ipc_input.loc[:fecha_disponible_IPCreal]
 
-    if moneda_contrato == "UF":
-        f_limite_efectivo = f_corte_dt.replace(day=1) if f_corte_dt.day >= 10 else (f_corte_dt - pd.DateOffset(months=2)).replace(day=1)
-    else:
-        f_limite_efectivo = pd.to_datetime(f_ipc_real_limite)
+    df_cuant_proy = proyectar_sarimax(
+        ts_ipc_input=ts_ipc_consulta_local, 
+        pasos=N_TEST, 
+        fecha_consulta=fecha_disponible_IPCreal, 
+        config=CONFIG_SARIMA
+    ).to_frame()
 
-    ts_ipc_corte_local = ts_ipc.loc[:f_ipc_real_limite]
-    df_cuant_proy = proyectar_sarimax(ts_ipc_data=ts_ipc_corte_local, pasos=N_TEST, fecha_corte=f_ipc_real_limite, config=CONFIG_SARIMA).to_frame()
-    
-    if "ipc_proyectado" in df_cuant_proy.columns:
-        df_cuant_proy = df_cuant_proy.rename(columns={"ipc_proyectado": "proyeccion"})
+    df_cuant_proy.columns = ["ipc_proyectado"]
 
+    # 4. Iteración y procesamiento monolítico de cada tramo del calendario
     for idx, row in calendario_df.iterrows():
-        f_inicio_t = pd.to_datetime(row["inicio_reajuste"])
-        f_fin_t = pd.to_datetime(row["fin_reajuste"])
-        frecuencia_t = (f_fin_t.year - f_inicio_t.year) * 12 + f_fin_t.month - f_inicio_t.month + 1
+        f_inicio_dt = pd.to_datetime(row["inicio_reajuste"])
+        f_fin_dt = pd.to_datetime(row["fin_reajuste"])
 
-        filtro_real = (df_ipc_nat.index >= f_inicio_t) & (df_ipc_nat.index <= f_fin_t) & (df_ipc_nat.index <= f_limite_efectivo)
-        df_real_tramo = df_ipc_nat.loc[filtro_real]
-        k_reales = len(df_real_tramo)
-        m_faltantes = max(0, frecuencia_t - k_reales)
+        # Cálculo de frecuencia y meses reales/faltantes directamente aquí
+        frecuencia_t = (f_fin_dt.year - f_inicio_dt.year) * 12 + f_fin_dt.month - f_inicio_dt.month + 1
 
-        ipc_real_acum = float(df_real_tramo["variacion_ipc"].sum()) if k_reales > 0 else 0.0
+        if f_fin_dt <= fecha_limite_efectivo:
+            k_reales = frecuencia_t
+            m_faltantes = 0
+        elif f_inicio_dt > fecha_limite_efectivo:
+            k_reales = 0
+            m_faltantes = frecuencia_t
+        else:
+            rango_meses = pd.date_range(start=f_inicio_dt, end=f_fin_dt, freq="MS")
+            k_reales = sum(1 for m in rango_meses if m <= fecha_limite_efectivo)
+            m_faltantes = max(0, frecuencia_t - k_reales)
+
+        # Filtrar datos reales disponibles para el tramo
+        filtro_real = (
+            (df_ipc_input.index >= f_inicio_dt)
+            & (df_ipc_input.index <= f_fin_dt)
+            & (df_ipc_input.index <= fecha_limite_efectivo)
+        )
+        df_real_tramo = df_ipc_input.loc[filtro_real]
+
+        # Acumulado real usando suma lineal
+        ipc_real_acum = 0.0
+        if k_reales > 0 and not df_real_tramo.empty:
+            col_var = "variacion_ipc" if "variacion_ipc" in df_real_tramo.columns else df_real_tramo.columns[0]
+            ipc_real_acum = float(df_real_tramo[col_var].sum())
+
         ipc_proy_acum = 0.0
         meses_proyectados_detalle = []
-        conteo_eee, conteo_cuant = 0, 0
+        rango_faltante = []
+        conteo_eee = 0
+        conteo_cuant = 0
 
+        # Procesamiento de la parte proyectada (híbrida EEE + SARIMA)
         if m_faltantes > 0:
-            inicio_proy = df_real_tramo.index[-1] + pd.DateOffset(months=1) if k_reales > 0 else f_inicio_t
+            if k_reales > 0 and not df_real_tramo.empty:
+                inicio_proy = df_real_tramo.index[-1] + pd.DateOffset(months=1)
+            else:
+                inicio_proy = f_inicio_dt
+
             rango_faltante = pd.date_range(start=inicio_proy, periods=m_faltantes, freq="MS")
 
             for fecha_mes in rango_faltante:
-                val_eee_mes = obtener_eee_para_mes(fecha_mes)
-                if fecha_mes == mes_objetivo_eee and val_eee_mes is not None:
-                    val_h = val_eee_mes
+                if not global_eee_asignado and val_eee_h1 is not None:
+                    val_h = val_eee_h1
                     conteo_eee += 1
+                    global_eee_asignado = True
                 else:
-                    val_h = float(df_cuant_proy.loc[fecha_mes, "proyeccion"]) if fecha_mes in df_cuant_proy.index else float(df_cuant_proy.iloc[-1]["proyeccion"])
+                    if fecha_mes in df_cuant_proy.index:
+                        val_h = float(df_cuant_proy.loc[fecha_mes, "ipc_proyectado"])
+                    else:
+                        val_h = (
+                            float(df_cuant_proy.iloc[-1]["ipc_proyectado"])
+                            if not df_cuant_proy.empty
+                            else 0.0
+                        )
                     conteo_cuant += 1
                 meses_proyectados_detalle.append(val_h)
 
             if meses_proyectados_detalle:
                 ipc_proy_acum = float(pd.Series(meses_proyectados_detalle).sum())
 
-            if not capturo_proyeccion:
-                df_proy_hibrida = pd.DataFrame({"variacion_ipc": meses_proyectados_detalle}, index=rango_faltante)
-                capturo_proyeccion = True
+            todos_meses_proyectados.extend(meses_proyectados_detalle)
+            todas_fechas_proyectadas.extend(rango_faltante)
+
+            partes_txt = []
+            if conteo_eee > 0:
+                partes_txt.append(f"{conteo_eee}m con EEE")
+            if conteo_cuant > 0:
+                partes_txt.append(f"{conteo_cuant}m con SARIMA")
+            estrategia_txt = " + ".join(partes_txt)
+        else:
+            estrategia_txt = "Período completo con IPC real"
+
+        # Cálculo del total del tramo por suma lineal
+        ipc_total_tramo = ipc_real_acum + ipc_proy_acum
+
+        # Definir estado del tramo
+        estado_tramo = "Cerrado/Real" if f_fin_dt < fecha_consulta_dt else "En curso/Proyectado"
+
+        resultados_tramos.append({
+            "inicio_reajuste": f_inicio_dt.strftime("%Y-%m-%d"),
+            "fin_reajuste": f_fin_dt.strftime("%Y-%m-%d"),
+            "meses_reales": k_reales,
+            "meses_proyectados": m_faltantes,
+            "estrategia": estrategia_txt,
+            "ipc_real_acum_%": round(ipc_real_acum, 4),
+            "ipc_proy_acum_%": round(ipc_proy_acum, 4),
+            "ipc_total_tramo_%": round(ipc_total_tramo, 4),
+            "estado": estado_tramo,
+        })
+
+    # 5. Consolidar serie temporal de proyección híbrida
+    df_proy_hibrida = pd.DataFrame(
+        {"ipc_proyectado": todos_meses_proyectados}, index=todas_fechas_proyectadas
+    )
+
+    return pd.DataFrame(resultados_tramos), df_proy_hibrida, fecha_limite_efectivo
+
+
+# ==============================================================================
+# FUNCIÓN DE HISTORIAL Y PROYECCIÓN DE CONTRATOS
+# ==============================================================================
+def calcular_historial_y_proyeccion_contrato(calendario_df, df_ipc_input, df_eee_input,
+                                             ts_mensual_ipc_input, fecha_consulta, 
+                                             fecha_disponible_IPCreal):
+    """
+    Calcula el historial de tramos contractuales y la proyección híbrida del IPC
+    usando SARIMA y suma lineal, de forma 100% autocontenida.
+    """
+    resultados_tramos = []
+    todos_meses_proyectados = []
+    todas_fechas_proyectadas = []
+    global_eee_asignado = False
+
+    # 1. Asegurar tipos de fecha y formatos base
+    if not isinstance(df_ipc_input.index, pd.DatetimeIndex):
+        df_ipc_input.index = pd.to_datetime(df_ipc_input.index)
+    if "variacion_ipc" in df_ipc_input.columns:
+        df_ipc_input["variacion_ipc"] = df_ipc_input["variacion_ipc"].astype(float)
+
+    if not isinstance(df_eee_input.index, pd.DatetimeIndex):
+        df_eee_input.index = pd.to_datetime(df_eee_input.index)
+
+    fecha_consulta_dt = pd.to_datetime(fecha_consulta)
+    fecha_limite_efectivo = pd.to_datetime(fecha_disponible_IPCreal)
+
+    # 2. Extracción directa de la EEE (h=1) si existe la variable global
+    mes_h1_eee = fecha_consulta.replace(day=1)
+    val_eee_h1 = None
+    val_eee_h1 = float(df_eee_input.loc[mes_h1_eee, df_eee_input.columns[0]])
+
+    # 3. Proyección cuantitativa fija ➔ SARIMA
+    ts_ipc_consulta_local = ts_mensual_ipc_input.loc[:fecha_disponible_IPCreal]
+    
+    df_cuant_proy = proyectar_sarimax(
+        ts_ipc_input=ts_ipc_consulta_local, 
+        pasos=N_TEST, 
+        fecha_consulta_str=fecha_disponible_IPCreal, 
+        config=CONFIG_SARIMA
+    ).to_frame()
+    
+    df_cuant_proy.columns = ["ipc_proyectado"]
+
+    # 4. Procesamiento directo tramo por tramo
+    for idx, row in calendario_df.iterrows():
+        f_inicio_dt = pd.to_datetime(row["inicio_reajuste"])
+        f_fin_dt = pd.to_datetime(row["fin_reajuste"])
+
+        # Cálculo de meses reales y faltantes
+        frecuencia_t = (f_fin_dt.year - f_inicio_dt.year) * 12 + f_fin_dt.month - f_inicio_dt.month + 1
+
+        if f_fin_dt <= fecha_limite_efectivo:
+            k_reales = frecuencia_t
+            m_faltantes = 0
+        elif f_inicio_dt > fecha_limite_efectivo:
+            k_reales = 0
+            m_faltantes = frecuencia_t
+        else:
+            rango_meses = pd.date_range(start=f_inicio_dt, end=f_fin_dt, freq="MS")
+            k_reales = sum(1 for m in rango_meses if m <= fecha_limite_efectivo)
+            m_faltantes = max(0, frecuencia_t - k_reales)
+
+        # Filtrar datos reales
+        filtro_real = (
+            (df_ipc_input.index >= f_inicio_dt)
+            & (df_ipc_input.index <= f_fin_dt)
+            & (df_ipc_input.index <= fecha_limite_efectivo)
+        )
+        df_real_tramo = df_ipc_input.loc[filtro_real]
+
+        # Acumulado real (solo suma)
+        ipc_real_acum = 0.0
+        if k_reales > 0 and not df_real_tramo.empty:
+            col_var = "variacion_ipc" if "variacion_ipc" in df_real_tramo.columns else df_real_tramo.columns[0]
+            ipc_real_acum = float(df_real_tramo[col_var].sum())
+
+        ipc_proy_acum = 0.0
+        meses_proyectados_detalle = []
+        rango_faltante = []
+        conteo_eee = 0
+        conteo_cuant = 0
+
+        # Procesar parte proyectada (EEE + SARIMA)
+        if m_faltantes > 0:
+            inicio_proy = df_real_tramo.index[-1] + pd.DateOffset(months=1) if (k_reales > 0 and not df_real_tramo.empty) else f_inicio_dt
+            rango_faltante = pd.date_range(start=inicio_proy, periods=m_faltantes, freq="MS")
+
+            for fecha_mes in rango_faltante:
+                if not global_eee_asignado and val_eee_h1 is not None:
+                    val_h = val_eee_h1
+                    conteo_eee += 1
+                    global_eee_asignado = True
+                else:
+                    if fecha_mes in df_cuant_proy.index:
+                        val_h = float(df_cuant_proy.loc[fecha_mes, "ipc_proyectado"])
+                    else:
+                        val_h = float(df_cuant_proy.iloc[-1]["ipc_proyectado"]) if not df_cuant_proy.empty else 0.0
+                    conteo_cuant += 1
+                meses_proyectados_detalle.append(val_h)
+
+            if meses_proyectados_detalle:
+                ipc_proy_acum = float(pd.Series(meses_proyectados_detalle).sum())
+
+            todos_meses_proyectados.extend(meses_proyectados_detalle)
+            todas_fechas_proyectadas.extend(rango_faltante)
 
             partes_txt = []
             if conteo_eee > 0: partes_txt.append(f"{conteo_eee}m con EEE")
@@ -350,51 +553,41 @@ def calcular_historial_y_proyeccion_contrato(calendario_df, df_ipc, df_eee, ts_i
         else:
             estrategia_txt = "Período completo con IPC real"
 
+        ipc_total_tramo = ipc_real_acum + ipc_proy_acum
+        estado_tramo = "Cerrado/Real" if f_fin_dt < fecha_consulta_dt else "En curso/Proyectado"
+
         resultados_tramos.append({
-            "inicio_reajuste": f_inicio_t.strftime("%Y-%m-%d"),
-            "fin_reajuste": f_fin_t.strftime("%Y-%m-%d"),
+            "inicio_reajuste": f_inicio_dt.strftime("%Y-%m-%d"),
+            "fin_reajuste": f_fin_dt.strftime("%Y-%m-%d"),
             "meses_reales": k_reales,
             "meses_proyectados": m_faltantes,
             "estrategia": estrategia_txt,
             "ipc_real_acum_%": round(ipc_real_acum, 4),
             "ipc_proy_acum_%": round(ipc_proy_acum, 4),
-            "ipc_total_tramo_%": round(ipc_real_acum + ipc_proy_acum, 4),
-            "estado": "Cerrado/Real" if m_faltantes == 0 else "En curso/Proyectado",
+            "ipc_total_tramo_%": round(ipc_total_tramo, 4),
+            "estado": estado_tramo,
         })
 
-    return pd.DataFrame(resultados_tramos), df_proy_hibrida, f_limite_efectivo
+    df_proy_hibrida = pd.DataFrame(
+        {"ipc_proyectado": todos_meses_proyectados}, index=todas_fechas_proyectadas
+    )
+
+    return pd.DataFrame(resultados_tramos), df_proy_hibrida, fecha_limite_efectivo
 
 
+# ==============================================================================
+#        FUNCIONES PARA UF
+# ==============================================================================
 
 # ==============================================================================
 # MONTECARLO UF
 # ==============================================================================
-def calcular_montecarlo_uf(moneda_contrato, monto_base, f_fecha_corte, df_trayectoria_mensual, 
+def calcular_montecarlo_uf(moneda_contrato, monto_base, fecha_consulta_str, df_trayectoria_mensual, 
                             m_meses_faltantes, val_uf_periodo, mes_eee_aplicado, df_proy_hibrida, 
                             resultados_backtest, rmse_ganador_pct):
     """
     Calcula los escenarios estocásticos de Montecarlo (puntual y trayectoria mes a mes) 
     calibrados por el RMSE del modelo, extrayendo percentiles empíricos puros para arriendos en UF.
-
-    Parameters
-    ----------
-    moneda_contrato : str. Moneda en que se firmó el contrato.
-    monto_base : float. Canon inicial de arriendo en UF.
-    f_fecha_corte : str o pd.Timestamp. Fecha de referencia o corte.
-    df_trayectoria_mensual : pd.DataFrame. DF con la evolución mensual de los cánones en CLP.
-    m_meses_faltantes : int. Meses que restan para completar el tramo de reajuste.
-    val_uf_periodo : float. Valor oficial de la UF al cierre del ciclo CMF (ej. 9 de abril).
-    mes_eee_aplicado : str o pd.Timestamp. Mes objetivo del reajuste.
-    df_proy_hibrida : pd.DataFrame. Proyecciones híbridas del IPC.
-    resultados_backtest : dict. Métricas y errores de las arquitecturas evaluadas.
-    rmse_ganador_pct : float o None. RMSE porcentual del modelo ganador.
-
-    Returns
-    -------
-    datos_puntuales : dict or None. Diccionario con los montos en CLP para los escenarios optimista (P10), mediana (P50) y pesimista (P90) al final del tramo.
-    df_trayectoria_resultado : pd.DataFrame or None. DF con la trayectoria mes a mes de los escenarios Montecarlo proyectados desde el corte en adelante.
-    mes_objetivo_ts : pd.Timestamp or None. Marca de tiempo correspondiente al mes objetivo del reajuste.
-    mes_inicio_proy : pd.Timestamp or None. Marca de tiempo que define el inicio formal de la proyección estocástica mes a mes.
     """
 
     if moneda_contrato != "UF":
@@ -406,8 +599,8 @@ def calcular_montecarlo_uf(moneda_contrato, monto_base, f_fecha_corte, df_trayec
     mes_inicio_proy = None
 
     # Parámetros globales
-    n_simulaciones = globals().get('N_SIMULACIONES', 5000)
-    semilla = globals().get('SEMILLA_GLOBAL', 42)
+    n_simulaciones = globals().get('N_SIMULACIONES', N_SIMULACIONES)
+    semilla = globals().get('SEMILLA_GLOBAL', SEMILLA_GLOBAL)
 
     # --- Cálculo 1: Montecarlo Puntual ---
     # Corregido: se evalúa la variable mes_eee_aplicado directamente sin comillas
@@ -451,8 +644,8 @@ def calcular_montecarlo_uf(moneda_contrato, monto_base, f_fecha_corte, df_trayec
 
     # --- Cálculo 2: Trayectoria Mes a Mes ---
     if df_trayectoria_mensual is not None and not df_trayectoria_mensual.empty:
-        f_corte_ts = pd.to_datetime(f_fecha_corte)
-        mes_inicio_proy = (f_corte_ts.replace(day=1) + pd.DateOffset(months=1))
+        fecha_consulta = pd.to_datetime(fecha_consulta_str)
+        mes_inicio_proy = (fecha_consulta.replace(day=1) + pd.DateOffset(months=1))
         
         df_futuro_mc = df_trayectoria_mensual[df_trayectoria_mensual.index >= mes_inicio_proy].copy()
         m_meses_total_proy = len(df_futuro_mc)
@@ -498,9 +691,309 @@ def calcular_montecarlo_uf(moneda_contrato, monto_base, f_fecha_corte, df_trayec
 
 
 # ==============================================================================
+# GRÁFICOS UF
+# ==============================================================================
+# --- LINEAS ---
+def plot_plotly_interactivo_uf(df_tramos_contrato, fecha_inicio_contrato, monto_base, nuevo_monto_arriendo, 
+                               ipc_total_periodo_actual, df_uf, fecha_consulta):
+    if df_tramos_contrato is None or df_tramos_contrato.empty:
+        return None
+
+    f_inicio_dt = pd.to_datetime(fecha_inicio_contrato)
+    
+    # Calcular vigencia en meses para aplicar el filtro de 2 años (si se provee fecha_consulta)
+    if fecha_consulta is not None:
+        f_consulta_dt = pd.to_datetime(fecha_consulta)
+        vigencia_meses = (f_consulta_dt.year - f_inicio_dt.year) * 12 + f_consulta_dt.month - f_inicio_dt.month
+    else:
+        vigencia_meses = 0
+
+    periodos_x = [f_inicio_dt.strftime('%Y-%m')]
+    
+    val_inicial_uf = float(monto_base)
+    canones_uf_num = [val_inicial_uf]
+    estados_fila = ["Canon Inicial"]
+
+    canon_acum_uf = val_inicial_uf
+    encontro_actual = False
+
+    for idx, row in df_tramos_contrato.iterrows():
+        is_tramo_activo = (row.get("meses_proyectados", 0) > 0) and not encontro_actual
+        
+        if is_tramo_activo:
+            encontro_actual = True
+            ipc_tramo_val = ipc_total_periodo_actual if ipc_total_periodo_actual is not None else float(row["ipc_total_tramo_%"]) / 100.0
+            ipc_tramo_val = max(0.0, ipc_tramo_val)
+            if nuevo_monto_arriendo is not None and nuevo_monto_arriendo > 0:
+                canon_acum_uf = float(nuevo_monto_arriendo)
+            c_uf_val = canon_acum_uf
+            estado_fila = "Tramo Proyectado (Vigente)"
+            
+        elif row.get("estado") == "Cerrado/Real":
+            c_uf_val = float(monto_base) 
+            estado_fila = "Histórico Real"
+            
+        else:
+            c_uf_val = canon_acum_uf
+            estado_fila = "Tramo Proyectado (Futuro)"
+
+        periodos_x.append(str(row["fin_reajuste"])[:7])
+        canones_uf_num.append(c_uf_val)
+        estados_fila.append(estado_fila)
+
+    if vigencia_meses >= 24 and len(periodos_x) > 1:
+        # Convertimos a DataFrame temporal para facilitar el filtrado por mes de aniversario
+        df_temp = pd.DataFrame({
+            "periodo_str": periodos_x,
+            "canon_uf": canones_uf_num,
+            "estado": estados_fila
+        })
+        df_temp["dt"] = pd.to_datetime(df_temp["periodo_str"] + "-01")
+        
+        # Separar histórico y proyectado
+        df_hist = df_temp[df_temp["estado"].str.contains("Histórico|Inicial|Vigente", case=False, na=False)].copy()
+        df_proy = df_temp[~df_temp["estado"].str.contains("Histórico|Inicial|Vigente", case=False, na=False)].copy()
+        
+        # Filtrar históricos por el mes de inicio del contrato (aniversario), manteniendo siempre el último punto
+        if not df_hist.empty:
+            df_hist_anual = df_hist[df_hist["dt"].dt.month == f_inicio_dt.month]
+            ultimo_hist = df_hist.iloc[[-1]]
+            
+            if not df_hist_anual.empty and df_hist_anual.index[-1] != df_hist.index[-1]:
+                df_hist_filtrado = pd.concat([df_hist_anual, ultimo_hist]).drop_duplicates(subset=["periodo_str"])
+            else:
+                df_hist_filtrado = ultimo_hist
+                
+            df_final_filtrado = pd.concat([df_hist_filtrado, df_proy]).drop_duplicates(subset=["periodo_str"])
+            
+            periodos_x = df_final_filtrado["periodo_str"].tolist()
+            canones_uf_num = df_final_filtrado["canon_uf"].tolist()
+            estados_fila = df_final_filtrado["estado"].tolist()
+    else:
+        # Resguardo clásico si no se cumple la condición de antigüedad
+        if len(periodos_x) > 24:
+            periodos_x = periodos_x[-24:]
+            canones_uf_num = canones_uf_num[-24:]
+            estados_fila = estados_fila[-24:]
+
+    # Matriz / Diccionario de UF al cierre de cada mes
+    matriz_uf = {}
+    
+    if df_uf is not None and not df_uf.empty:
+        df_uf_m = df_uf.copy()
+        if not isinstance(df_uf_m.index, pd.DatetimeIndex):
+            df_uf_m.index = pd.to_datetime(df_uf_m.index)
+        
+        df_uf_m['AnioMes'] = df_uf_m.index.strftime('%Y-%m')
+        for mes_str, grupo in df_uf_m.groupby('AnioMes'):
+            val_cierre = grupo["valor_uf"].dropna()
+            if not val_cierre.empty:
+                matriz_uf[mes_str] = float(val_cierre.iloc[-1])
+        
+        todas_ufs = df_uf_m["valor_uf"].dropna()
+        # Se asigna estrictamente el último valor real encontrado en los datos
+        ultimo_uf_val = float(todas_ufs.iloc[-1]) if not todas_ufs.empty else None
+    else:
+        ultimo_uf_val = None
+
+    canones_clp_num = []
+    for i, p_str in enumerate(periodos_x):
+        # Si no encuentra el mes en la matriz, busca el último valor real; si tampoco existe, lanza una advertencia o error
+        uf_val = matriz_uf.get(p_str, ultimo_uf_val)
+        if uf_val is None:
+            raise ValueError(f"No se encontró un valor de UF válido para el periodo {p_str} ni en los datos generales.")
+        canones_clp_num.append(canones_uf_num[i] * uf_val)
+
+    corte_idx = next((i for i, est in enumerate(estados_fila) if "Tramo Proyectado" in est), len(periodos_x) - 1)
+    corte_idx = max(0, corte_idx - 1)
+
+    fig = go.Figure()
+
+    # Histórico UF (convertido a CLP)
+    fig.add_trace(go.Scatter(
+        x=periodos_x[:corte_idx+1], y=canones_clp_num[:corte_idx+1],
+        mode='lines+markers+text', 
+        name='Histórico UF (CLP)',
+        text=[f"${v:,.0f}" for v in canones_clp_num[:corte_idx+1]],
+        textposition="top center",
+        line=dict(color=color_historico, width=3),
+        marker=dict(size=8),
+        hovertemplate="<b>Histórico UF</b><br>Período: %{customdata[0]}<br>Canon: $%{y:,.0f} CLP<br><i>(%{customdata[1]:.2f} UF)</i><extra></extra>",
+        customdata=list(zip(periodos_x[:corte_idx+1], canones_uf_num[:corte_idx+1]))
+    ))
+
+    # Proyección UF (convertido a CLP)
+    fig.add_trace(go.Scatter(
+        x=periodos_x[corte_idx:], y=canones_clp_num[corte_idx:],
+        mode='lines+markers+text', 
+        name='Proyección UF (CLP)', 
+        text=[f"${v:,.0f}" for v in canones_clp_num[corte_idx:]],
+        textposition="top center",
+        line=dict(color=color_aux, width=3, dash='dash'),
+        marker=dict(size=8),
+        hovertemplate="<b>Proyección UF</b><br>Período: %{customdata[0]}<br>Canon: $%{y:,.0f} CLP<br><i>(%{customdata[1]:.2f} UF)</i><extra></extra>",
+        customdata=list(zip(periodos_x[corte_idx:], canones_uf_num[corte_idx:]))
+    ))
+
+    fig.update_layout(
+        title=dict(
+            text="<b>Evolución y Proyección del Canon (Contrato UF a CLP)</b>",
+            font=dict(size=16),
+            x=0.0,
+            y=0.96
+        ),
+        xaxis_title="Períodos de análisis", 
+        yaxis_title="Canon en CLP ($)",
+        height=480,
+        hovermode="closest", 
+        template="plotly_white",
+        margin=dict(t=90, b=50, l=60, r=40),
+        legend=dict(
+            orientation="h", 
+            yanchor="bottom", 
+            y=1.02, 
+            xanchor="left", 
+            x=0.3
+        )
+    )
+
+    ymin = min(canones_clp_num) * 0.95
+    ymax = max(canones_clp_num) * 1.05
+
+    fig.update_yaxes(
+        tickformat=",.0f",
+        range=[ymin, ymax]
+    )
+
+    return fig
+
+# --- ABANICO ---
+def plot_plotly_abanico_uf(df_escenarios_uf):
+    if df_escenarios_uf is None or df_escenarios_uf.empty:
+        return None
+    
+    df_graf_proy = df_escenarios_uf.copy()
+
+    # Asegurar columna de fecha temporal en formato datetime para poder filtrar
+    if "Mes" in df_graf_proy.columns:
+        df_graf_proy["Mes_dt"] = pd.to_datetime(df_graf_proy["Mes"], errors='coerce')
+    else:
+        return None
+
+    # --- FILTRADO DINÁMICO: DESDE EL ÚLTIMO REAJUSTE / CIERRE HACIA ADELANTE ---
+    # 1. Buscar dinámicamente si hay filas marcadas como históricas/cerradas para hallar el último hito
+    fecha_corte_graf = None
+    if "Estado" in df_graf_proy.columns:
+        tramos_pasados = df_graf_proy[df_graf_proy["Estado"].isin(["Cerrado/Real", "Histórico Real"])]
+        if not tramos_pasados.empty:
+            fecha_corte_graf = tramos_pasados["Mes_dt"].max()
+
+    # 2. Si no hay marcas de estado, calculamos dinámicamente el cierre del mes anterior (ej. 31 de agosto de 2026)
+    if pd.isna(fecha_corte_graf) or fecha_corte_graf is None:
+        ref_date = pd.Timestamp.today()
+        fecha_corte_graf = (ref_date.replace(day=1) - pd.Timedelta(days=1))
+
+    # Filtrar estrictamente: solo desde la fecha del último reajuste en adelante
+    df_filtrado = df_graf_proy[df_graf_proy["Mes_dt"] >= fecha_corte_graf].copy()
+
+    # Si por formato de datos el filtro estricto dejara muy pocos puntos, tomamos los últimos 12 proyectados de respaldo
+    if len(df_filtrado) >= 2:
+        df_graf_proy = df_filtrado
+    else:
+        df_graf_proy = df_graf_proy.tail(12).copy()
+
+    if df_graf_proy.empty:
+        return None
+
+    # Usar los strings originales limpios del mes para el eje X
+    x_labels = df_graf_proy["Mes"].astype(str).tolist()
+    y_base = df_graf_proy["Canon Base (Trayectoria)"].astype(float).tolist()
+    
+    y_opt, y_pes = [], []
+    for _, row in df_graf_proy.iterrows():
+        opt_val = row.get("Optimista (P10 - IPC Bajo)", row["Canon Base (Trayectoria)"])
+        pes_val = row.get("Pesimista (P90 - IPC Alto)", row["Canon Base (Trayectoria)"])
+        base_val = float(row["Canon Base (Trayectoria)"])
+        
+        y_opt.append(float(opt_val) if pd.notna(opt_val) else base_val)
+        y_pes.append(float(pes_val) if pd.notna(pes_val) else base_val)
+
+    fig = go.Figure()
+
+    # Rango de Incertidumbre (Área sombreada)
+    fig.add_trace(go.Scatter(
+        x=x_labels + x_labels[::-1],
+        y=y_pes + y_opt[::-1],
+        fill='toself',
+        fillcolor='rgba(136, 204, 238, 0.25)',
+        line=dict(color='rgba(255,255,255,0)'),
+        hoverinfo="skip",
+        showlegend=True,
+        name='Rango de Incertidumbre'
+    ))
+
+    # Escenario Pesimista (P90)
+    fig.add_trace(go.Scatter(
+        x=x_labels, y=y_pes,
+        mode='lines+markers',
+        name='Pesimista (P90)',
+        line=dict(color=color_pesimista, width=2, dash='dash'),
+        marker=dict(symbol='triangle-down', size=8)
+    ))
+
+    # Escenario Base (P50)
+    fig.add_trace(go.Scatter(
+        x=x_labels, y=y_base,
+        mode='lines+markers+text',
+        name='Escenario Base (P50)',
+        text=[f"${v:,.0f}" for v in y_base],
+        textposition="top center",
+        line=dict(color=color_base, width=2.5, dash='dash'),
+        marker=dict(symbol='square', size=8)
+    ))
+
+    # Escenario Optimista (P10)
+    fig.add_trace(go.Scatter(
+        x=x_labels, y=y_opt,
+        mode='lines+markers',
+        name='Optimista (P10)',
+        line=dict(color=color_optimista, width=2, dash='dash'),
+        marker=dict(symbol='triangle-up', size=8)
+    ))
+
+    fig.update_layout(
+        title=dict(
+            text="<b>Abanico de Escenarios de Montecarlo (Contrato UF)</b>",
+            font=dict(size=16),
+            x=0.0,
+            y=0.96
+        ),
+        xaxis_title="Períodos de análisis", 
+        yaxis_title="Canon en CLP ($)",
+        height=500,
+        hovermode="x unified", 
+        template="plotly_white",
+        margin=dict(t=90, b=50, l=60, r=40),
+        legend=dict(
+            orientation="h", 
+            yanchor="bottom", 
+            y=1.02, 
+            xanchor="left", 
+            x=0.2
+        )
+    )
+
+    return fig
+
+
+
+# ==============================================================================
+#        FUNCIONES PARA CLP
+# ==============================================================================
+# ==============================================================================
 # FUNCIÓN ➔ GENERACIÓN DE ESCENARIOS MONTECARLO CLP (SUMA SIMPLE + DF_IPC)
 # ==============================================================================
-def calcular_montecarlo_clp(moneda_contrato, monto_base, f_fecha_corte, 
+def calcular_montecarlo_clp(moneda_contrato, monto_base, fecha_consulta_str, 
                             df_ipc, df_tramos_contrato, m_meses_faltantes, ipc_real_acum,
                             df_proy_hibrida, rmse_val, canon_acumulado_historico, nuevo_monto_arriendo):
     """
@@ -516,8 +1009,8 @@ def calcular_montecarlo_clp(moneda_contrato, monto_base, f_fecha_corte,
     canon_optimista, canon_pesimista = None, None
 
     # Parámetros globales de simulación
-    n_simulaciones = globals().get('N_SIMULACIONES', 5000)
-    semilla = globals().get('SEMILLA_GLOBAL', 42)
+    n_simulaciones = globals().get('N_SIMULACIONES', N_SIMULACIONES)
+    semilla = globals().get('SEMILLA_GLOBAL', SEMILLA_GLOBAL)
     np.random.seed(semilla)
     sigma_mensual = float(rmse_val) / 100.0  # Desviación estándar mensual basada en el RMSE
 
@@ -575,7 +1068,7 @@ def calcular_montecarlo_clp(moneda_contrato, monto_base, f_fecha_corte,
         df_tramos_futuros = df_tramos_contrato[
             (df_tramos_contrato["meses_proyectados"] > 0) | 
             (df_tramos_contrato["estado"] == "Tramo Proyectado (Futuro)") |
-            (pd.to_datetime(df_tramos_contrato["inicio_reajuste"]) > pd.to_datetime(f_fecha_corte))
+            (pd.to_datetime(df_tramos_contrato["inicio_reajuste"]) > pd.to_datetime(fecha_consulta_str))
         ].copy()
         
         if df_tramos_futuros.empty:
@@ -638,9 +1131,6 @@ def calcular_montecarlo_clp(moneda_contrato, monto_base, f_fecha_corte,
         df_tramos_futuros_resultado = pd.DataFrame(lista_clp_futuro_mc)
 
     return datos_puntuales_clp, df_tramos_futuros_resultado
-
-
-
 
 
 # ==============================================================================
@@ -881,258 +1371,3 @@ def plot_plotly_abanico_clp(df_tramos_contrato, monto_base, nuevo_monto_arriendo
     return fig
 
 
-# ==============================================================================
-# GRÁFICOS UF
-# ==============================================================================
-# --- LINEAS ---
-def plot_plotly_interactivo_uf(df_tramos_contrato, fecha_inicio_contrato, monto_base, nuevo_monto_arriendo=None, ipc_total_periodo_actual=None, df_uf=None):
-    if df_tramos_contrato is None or df_tramos_contrato.empty:
-        return None
-
-    if nuevo_monto_arriendo is None:
-        nuevo_monto_arriendo = float(monto_base)
-
-    f_inicio_dt = pd.to_datetime(fecha_inicio_contrato)
-    periodos_x = [f_inicio_dt.strftime('%Y-%m')]
-    
-    val_inicial_uf = float(monto_base)
-    canones_clp_num = []
-    canones_uf_num = [val_inicial_uf]
-    estados_fila = ["Canon Inicial"]
-
-    canon_acum_uf = val_inicial_uf
-    encontro_actual = False
-
-    for idx, row in df_tramos_contrato.iterrows():
-        is_tramo_activo = (row.get("meses_proyectados", 0) > 0) and not encontro_actual
-        
-        if is_tramo_activo:
-            encontro_actual = True
-            ipc_tramo_val = ipc_total_periodo_actual if ipc_total_periodo_actual is not None else float(row["ipc_total_tramo_%"]) / 100.0
-            ipc_tramo_val = max(0.0, ipc_tramo_val)
-            if nuevo_monto_arriendo is not None and nuevo_monto_arriendo > 0:
-                canon_acum_uf = float(nuevo_monto_arriendo)
-            c_uf_val = canon_acum_uf
-            estado_fila = "Tramo Proyectado (Vigente)"
-            
-        elif row.get("estado") == "Cerrado/Real":
-            c_uf_val = float(monto_base) 
-            estado_fila = "Histórico Real"
-            
-        else:
-            c_uf_val = canon_acum_uf
-            estado_fila = "Tramo Proyectado (Futuro)"
-
-        periodos_x.append(str(row["fin_reajuste"])[:7])
-        canones_uf_num.append(c_uf_val)
-        estados_fila.append(estado_fila)
-
-    if len(periodos_x) > 24:
-        periodos_x = periodos_x[-24:]
-        canones_uf_num = canones_uf_num[-24:]
-        estados_fila = estados_fila[-24:]
-
-    # Matriz / Diccionario de UF al cierre de cada mes
-    matriz_uf = {}
-    ultimo_uf_val = 38000.0
-    
-    if df_uf is not None and not df_uf.empty:
-        df_uf_m = df_uf.copy()
-        if not isinstance(df_uf_m.index, pd.DatetimeIndex):
-            df_uf_m.index = pd.to_datetime(df_uf_m.index)
-        
-        df_uf_m['AnioMes'] = df_uf_m.index.strftime('%Y-%m')
-        for mes_str, grupo in df_uf_m.groupby('AnioMes'):
-            val_cierre = grupo["valor_uf"].dropna()
-            if not val_cierre.empty:
-                matriz_uf[mes_str] = float(val_cierre.iloc[-1])
-        
-        todas_ufs = df_uf_m["valor_uf"].dropna()
-        if not todas_ufs.empty:
-            ultimo_uf_val = float(todas_ufs.iloc[-1])
-
-    canones_clp_num = []
-    for i, p_str in enumerate(periodos_x):
-        uf_val = matriz_uf.get(p_str, ultimo_uf_val)
-        canones_clp_num.append(canones_uf_num[i] * uf_val)
-
-    corte_idx = next((i for i, est in enumerate(estados_fila) if "Tramo Proyectado" in est), len(periodos_x) - 1)
-    corte_idx = max(0, corte_idx - 1)
-
-    fig = go.Figure()
-
-    # Histórico UF (convertido a CLP)
-    fig.add_trace(go.Scatter(
-        x=periodos_x[:corte_idx+1], y=canones_clp_num[:corte_idx+1],
-        mode='lines+markers+text', 
-        name='Histórico UF (CLP)',
-        text=[f"${v:,.0f}" for v in canones_clp_num[:corte_idx+1]],
-        textposition="top center",
-        line=dict(color=color_historico, width=3),
-        marker=dict(size=8),
-        hovertemplate="<b>Histórico UF</b><br>Período: %{customdata[0]}<br>Canon: $%{y:,.0f} CLP<br><i>(%{customdata[1]:.2f} UF)</i><extra></extra>",
-        customdata=list(zip(periodos_x[:corte_idx+1], canones_uf_num[:corte_idx+1]))
-    ))
-
-    # Proyección UF (convertido a CLP)
-    fig.add_trace(go.Scatter(
-        x=periodos_x[corte_idx:], y=canones_clp_num[corte_idx:],
-        mode='lines+markers+text', 
-        name='Proyección UF (CLP)', 
-        text=[f"${v:,.0f}" for v in canones_clp_num[corte_idx:]],
-        textposition="top center",
-        line=dict(color=color_aux, width=3, dash='dash'),
-        marker=dict(size=8),
-        hovertemplate="<b>Proyección UF</b><br>Período: %{customdata[0]}<br>Canon: $%{y:,.0f} CLP<br><i>(%{customdata[1]:.2f} UF)</i><extra></extra>",
-        customdata=list(zip(periodos_x[corte_idx:], canones_uf_num[corte_idx:]))
-    ))
-
-    fig.update_layout(
-        title=dict(
-            text="<b>Evolución y Proyección del Canon (Contrato UF a CLP)</b>",
-            font=dict(size=16),
-            x=0.0,
-            y=0.96
-        ),
-        xaxis_title="Períodos de análisis", 
-        yaxis_title="Canon en CLP ($)",
-        height=480,
-        hovermode="closest", 
-        template="plotly_white",
-        margin=dict(t=90, b=50, l=60, r=40),
-        legend=dict(
-            orientation="h", 
-            yanchor="bottom", 
-            y=1.02, 
-            xanchor="left", 
-            x=0.3
-        )
-    )
-
-    ymin = min(canones_clp_num) * 0.95
-    ymax = max(canones_clp_num) * 1.05
-
-    fig.update_yaxes(
-        tickformat=",.0f",
-        range=[ymin, ymax]
-    )
-
-    return fig
-
-# --- ABANICO ---
-def plot_plotly_abanico_uf(df_escenarios_uf):
-    if df_escenarios_uf is None or df_escenarios_uf.empty:
-        return None
-    
-    df_graf_proy = df_escenarios_uf.copy()
-
-    # Asegurar columna de fecha temporal en formato datetime para poder filtrar
-    if "Mes" in df_graf_proy.columns:
-        df_graf_proy["Mes_dt"] = pd.to_datetime(df_graf_proy["Mes"], errors='coerce')
-    else:
-        return None
-
-    # --- FILTRADO DINÁMICO: DESDE EL ÚLTIMO REAJUSTE / CIERRE HACIA ADELANTE ---
-    # 1. Buscar dinámicamente si hay filas marcadas como históricas/cerradas para hallar el último hito
-    fecha_corte_graf = None
-    if "Estado" in df_graf_proy.columns:
-        tramos_pasados = df_graf_proy[df_graf_proy["Estado"].isin(["Cerrado/Real", "Histórico Real"])]
-        if not tramos_pasados.empty:
-            fecha_corte_graf = tramos_pasados["Mes_dt"].max()
-
-    # 2. Si no hay marcas de estado, calculamos dinámicamente el cierre del mes anterior (ej. 31 de agosto de 2026)
-    if pd.isna(fecha_corte_graf) or fecha_corte_graf is None:
-        ref_date = pd.Timestamp.today()
-        fecha_corte_graf = (ref_date.replace(day=1) - pd.Timedelta(days=1))
-
-    # Filtrar estrictamente: solo desde la fecha del último reajuste en adelante
-    df_filtrado = df_graf_proy[df_graf_proy["Mes_dt"] >= fecha_corte_graf].copy()
-
-    # Si por formato de datos el filtro estricto dejara muy pocos puntos, tomamos los últimos 12 proyectados de respaldo
-    if len(df_filtrado) >= 2:
-        df_graf_proy = df_filtrado
-    else:
-        df_graf_proy = df_graf_proy.tail(12).copy()
-
-    if df_graf_proy.empty:
-        return None
-
-    # Usar los strings originales limpios del mes para el eje X
-    x_labels = df_graf_proy["Mes"].astype(str).tolist()
-    y_base = df_graf_proy["Canon Base (Trayectoria)"].astype(float).tolist()
-    
-    y_opt, y_pes = [], []
-    for _, row in df_graf_proy.iterrows():
-        opt_val = row.get("Optimista (P10 - IPC Bajo)", row["Canon Base (Trayectoria)"])
-        pes_val = row.get("Pesimista (P90 - IPC Alto)", row["Canon Base (Trayectoria)"])
-        base_val = float(row["Canon Base (Trayectoria)"])
-        
-        y_opt.append(float(opt_val) if pd.notna(opt_val) else base_val)
-        y_pes.append(float(pes_val) if pd.notna(pes_val) else base_val)
-
-    fig = go.Figure()
-
-    # Rango de Incertidumbre (Área sombreada)
-    fig.add_trace(go.Scatter(
-        x=x_labels + x_labels[::-1],
-        y=y_pes + y_opt[::-1],
-        fill='toself',
-        fillcolor='rgba(136, 204, 238, 0.25)',
-        line=dict(color='rgba(255,255,255,0)'),
-        hoverinfo="skip",
-        showlegend=True,
-        name='Rango de Incertidumbre'
-    ))
-
-    # Escenario Pesimista (P90)
-    fig.add_trace(go.Scatter(
-        x=x_labels, y=y_pes,
-        mode='lines+markers',
-        name='Pesimista (P90)',
-        line=dict(color=color_pesimista, width=2, dash='dash'),
-        marker=dict(symbol='triangle-down', size=8)
-    ))
-
-    # Escenario Base (P50)
-    fig.add_trace(go.Scatter(
-        x=x_labels, y=y_base,
-        mode='lines+markers+text',
-        name='Escenario Base (P50)',
-        text=[f"${v:,.0f}" for v in y_base],
-        textposition="top center",
-        line=dict(color=color_base, width=2.5, dash='dash'),
-        marker=dict(symbol='square', size=8)
-    ))
-
-    # Escenario Optimista (P10)
-    fig.add_trace(go.Scatter(
-        x=x_labels, y=y_opt,
-        mode='lines+markers',
-        name='Optimista (P10)',
-        line=dict(color=color_optimista, width=2, dash='dash'),
-        marker=dict(symbol='triangle-up', size=8)
-    ))
-
-    fig.update_layout(
-        title=dict(
-            text="<b>Abanico de Escenarios de Montecarlo (Contrato UF)</b>",
-            font=dict(size=16),
-            x=0.0,
-            y=0.96
-        ),
-        xaxis_title="Períodos de análisis", 
-        yaxis_title="Canon en CLP ($)",
-        height=500,
-        hovermode="x unified", 
-        template="plotly_white",
-        margin=dict(t=90, b=50, l=60, r=40),
-        legend=dict(
-            orientation="h", 
-            yanchor="bottom", 
-            y=1.02, 
-            xanchor="left", 
-            x=0.2
-        )
-    )
-
-    return fig

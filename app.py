@@ -36,9 +36,8 @@ def obtener_datos_cacheados(token_api, modo_datos):
 
 
 # ==========================================
-# BARRA LATERAL: ORDEN SOLICITADO
+# BARRA LATERAL
 # ==========================================
-
 # 1. Título ¡Bienvenido!
 st.sidebar.markdown(
     "<h1 style='text-align: center; font-size: 28px; color: #202124;'>🏠 ¡Bienvenido! 🎯</h1>", 
@@ -46,6 +45,14 @@ st.sidebar.markdown(
 )
 
 # 2. Tarjeta Fecha de Consulta
+st.markdown("""
+    <style>
+        ul[role="listbox"] {
+            min-width: 120px !important;  /* más ancho para el año */
+        }
+    </style>
+""", unsafe_allow_html=True)
+
 st.sidebar.markdown(f"""
     <div style="background-color: #e8f0fe; padding: 12px 15px; border-radius: 8px; border: 1px solid #d2e3fc; display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
         <span style="font-size: 28px; line-height: 1;">📅</span>
@@ -61,13 +68,25 @@ modo_datos_default = "🌐 En Vivo (API Banco Central)"
 token_api_default = st.secrets.get("BCCH_TOKEN", "")
 
 # 3. Carga inicial optimizada con caché
-df_ipc, df_eee, df_uf, df_eur, estado_fuente = obtener_datos_cacheados(token_api_default, modo_datos_default)
+df_ipc, df_eee_aux, df_uf, df_eur, estado_fuente = obtener_datos_cacheados(token_api_default, modo_datos_default)
+
+df_eee = utils.transformar_df_eee(df_eee_aux)
+
+
+# AUX fechas
+fecha_consulta_str = datetime.date.today().strftime('%Y-%m-%d')
+fecha_consulta = pd.to_datetime(fecha_consulta_str)
 
 # 4. Tarjeta Paridad EUR/CLP
 val_eur_hoy = 0.0
 try:
     if df_eur is not None and not df_eur.empty:
-        val_eur_hoy = float(df_eur["valor_eur"].iloc[0])
+        df_eur_m = df_eur.copy()
+        if not isinstance(df_eur_m.index, pd.DatetimeIndex):
+            df_eur_m.index = pd.to_datetime(df_eur_m.index)
+        df_eur_filtrado = df_eur_m[df_eur_m.index <= fecha_consulta].dropna(subset=["eurclp"])
+        if not df_eur_filtrado.empty:
+            val_eur_hoy = float(df_eur_filtrado["eurclp"].iloc[-1])
 except Exception:
     val_eur_hoy = 0.0
 
@@ -87,22 +106,16 @@ st.sidebar.markdown(f"""
 val_uf_hoy = 0.0
 try:
     if df_uf is not None and not df_uf.empty:
-        df_uf_temp = df_uf.copy()
-        if not isinstance(df_uf_temp.index, pd.DatetimeIndex):
-            df_uf_temp.index = pd.to_datetime(df_uf_temp.index)
-        
-        f_corte_dt = pd.to_datetime(datetime.date.today())
-        df_uf_corte = df_uf_temp[df_uf_temp.index <= f_corte_dt].dropna(subset=["valor_uf"])
-        
-        if not df_uf_corte.empty:
-            val_uf_hoy = float(df_uf_corte["valor_uf"].iloc[-1])
-        else:
-            val_uf_hoy = float(df_uf_temp.dropna(subset=["valor_uf"])["valor_uf"].iloc[-1])
+        df_uf_m = df_uf.copy()
+        if not isinstance(df_uf_m.index, pd.DatetimeIndex):
+            df_uf_m.index = pd.to_datetime(df_uf_m.index)
+        df_uf_filtrado = df_uf_m[df_uf_m.index <= fecha_consulta].dropna(subset=["valor_uf"])
+        if not df_uf_filtrado.empty:
+            val_uf_hoy = float(df_uf_filtrado["valor_uf"].iloc[-1])
 except Exception:
     val_uf_hoy = 0.0
 
 uf_txt = f"${val_uf_hoy:,.2f} CLP" if val_uf_hoy > 0 else "No disponible"
-
 st.sidebar.markdown(f"""
     <div style="background-color: #e8f0fe; padding: 12px 15px; border-radius: 8px; border: 1px solid #d2e3fc; display: flex; align-items: center; gap: 12px; margin-bottom: 10px;">
         <span style="font-size: 28px; line-height: 1;">🇨🇱</span>
@@ -140,13 +153,27 @@ if modo_datos != modo_datos_default or token_api != token_api_default:
 
 st.sidebar.markdown("---")
 
-# 7. Formulario de Condiciones del Contrato
-with st.sidebar.form("form_contrato"):
-    st.subheader("📜 Condiciones del Contrato")
-    st.markdown("**¿Te gustaría saber en cuánto se podría reajustar tu arriendo?**<br>Ingresa los siguientes datos:", unsafe_allow_html=True)
+# 7. Condiciones del Contrato
+with st.sidebar.container(border=True):
+    st.markdown("<h3 style='margin: 0px; padding: 0px; font-size: 22px;'>📜 Condiciones del Contrato</h3>", unsafe_allow_html=True)
+    
+    st.markdown("<br><b>¿Te gustaría saber en cuánto se podría reajustar tu arriendo?</b><br>Ingresa los siguientes datos:", unsafe_allow_html=True)
+
+    fecha_inicio_val = st.date_input(
+        "Fecha de Inicio del Contrato", 
+        value=datetime.date(2026, 1, 1),
+        format="DD/MM/YYYY"
+    )
+    fecha_inicio_str = fecha_inicio_val.strftime("%Y-%m-%d")
 
     moneda_contrato = st.selectbox("Moneda del Contrato", ["UF", "CLP"], index=1)
+    if moneda_contrato == 'CLP':
+        texto_moneda = "Pesos chilenos"
+    else:
+        texto_moneda = "Unidad de Fomento"
 
+    st.markdown(f"<p style='font-size: 14px; color: #5f6368; margin-top: -10px; margin-bottom: 10px;'>{texto_moneda}</p>", unsafe_allow_html=True)
+    
     if moneda_contrato == "UF":
         monto_base = st.number_input(
             "Canon Inicial de Arriendo (UF)", 
@@ -156,25 +183,61 @@ with st.sidebar.form("form_contrato"):
             step=0.5,
             help="Debe estar entre 5 y 50 UF"
         )
-        frecuencia_meses = 1  
+        frecuencia_meses = 1 
+        st.markdown(
+            "<p style='font-size: 13px; color: #174ea6; background-color: #e8f0fe; padding: 10px; border-radius: 8px; margin-top: 15px; line-height: 1.4;'>"
+            "ℹ️ El valor de la UF se reajusta de forma diaria, pero aquí te mostraremos la evolución según los cierres mensuales."
+            "</p>", 
+            unsafe_allow_html=True
+        )
+
     else:
         monto_base = st.number_input(
             "Canon Inicial de Arriendo (CLP)", 
-            min_value=10000.0, 
-            max_value=2000000.0, 
-            value=500000.0, 
-            step=10000.0,
-            help="Debe estar entre 10.000 y 2.000.000 CLP"
+            min_value=10000, 
+            max_value=2000000, 
+            value=500000, 
+            step=10000,
+            format="%d",
+            help="Debe estar entre 10,000 y 2,000,000 CLP"
         )
+        
+        monto_formateado = f"{monto_base:,.0f}"
+        st.markdown(f"<p style='font-size: 14px; color: #5f6368; margin-top: -10px; margin-bottom: 10px;'>Valor seleccionado: <b>$ {monto_formateado} CLP</b></p>", unsafe_allow_html=True)
+
         frecuencia_meses = st.selectbox("Frecuencia de Reajuste (meses)", [3, 6, 12], index=1)
 
-    fecha_inicio_val = st.date_input(
-        "Fecha de Inicio del Contrato", 
-        value=datetime.date(2023, 1, 31)
-    )
-    fecha_inicio_str = fecha_inicio_val.strftime("%Y-%m-%d")
-    
-    submitted = st.form_submit_button("Calcular Reajuste 🔍")
+        if frecuencia_meses == 3:
+            texto_frecuencia = "Trimestral"
+        elif frecuencia_meses == 6:
+            texto_frecuencia = "Semestral"
+        else:
+            texto_frecuencia = "Anual"
+
+        st.markdown(f"<p style='font-size: 14px; color: #5f6368; margin-top: -10px;'> Reajuste <b>{texto_frecuencia}</b></p>", unsafe_allow_html=True)
+
+st.markdown("""
+    <style>
+        /* Iguala el tamaño de las etiquetas (labels) de los inputs con el resto del diseño */
+        .stSidebar label {
+            font-size: 15px !important;
+            font-weight: 600 !important;
+        }
+        
+        /* Estilo del botón principal */
+        .stButton > button {
+            width: 100%;
+            font-size: 18px !important;
+            padding-top: 12px !important;
+            padding-bottom: 12px !important;
+            font-weight: bold;
+        }
+    </style>
+""", unsafe_allow_html=True)
+
+submitted = st.sidebar.button("Calcular Reajuste 🔍")
+
+
 
 # 8. Estado de la fuente
 st.sidebar.markdown("---")
@@ -190,17 +253,16 @@ st.sidebar.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-
 # ==========================================
 # INTERFAZ PRINCIPAL
 # ==========================================
 if not submitted:
     st.markdown("""
         <div style="background: linear-gradient(135deg, #e8f0fe 0%, #f1f3f4 100%); padding: 50px 30px; border-radius: 12px; border: 1px solid #d2e3fc; text-align: center; margin-top: 40px; box-shadow: 0 4px 6px rgba(0,0,0,0.02);">
-            <h1 style='color: #174ea6; margin-bottom: 15px;'>🏠 Simulador Inteligente de Reajuste de Arriendos</h1>
-            <p style='color: #5f6368; font-size: 18px; max-width: 750px; margin: 0 auto; line-height: 1.6;'>
-                Modelo híbrido que combina la evolución histórica de la inflación con las expectativas del mercado recopiladas por el Banco Central.<br><br>
-                <b>Por favor, ingresa los parámetros de tu contrato en el panel izquierdo y haz clic en el botón <span style='color: #174ea6;'>“Calcular Reajuste 🔍”</span> para desplegar el análisis completo.</b>
+            <h1 style='color: #174ea6; margin-bottom: 15px; font-size: 50px;'>🏠 Simulador Inteligente de Reajuste de Arriendos</h1>
+            <p style='color: #5f6368; font-size: 22px; max-width: 750px; margin: 0 auto; line-height: 1.6;'>
+                Modelo híbrido que combina la evolución histórica de la inflación con las expectativas del mercado recopiladas por el Banco Central 🏦<br><br>
+                <b>Por favor, ingresa las condiciones de tu contrato en el panel izquierdo y haz clic en el botón <span style='color: #174ea6;'>“Calcular Reajuste 🔍”</span> para desplegar el análisis completo.</b>
             </p>
         </div>
     """, unsafe_allow_html=True)
@@ -208,34 +270,32 @@ if not submitted:
 else:
     col_eee = df_eee.columns[0]
     ts_ipc = df_ipc["variacion_ipc"]
-    f_fecha_corte = pd.to_datetime("today").normalize()
+    fecha_consulta = pd.to_datetime("today").normalize()
 
     try:
-        f_inicio_dt = utils.validar_fecha_inicio(fecha_inicio_str, f_fecha_corte)
+        f_inicio_dt = utils.validar_fecha_inicio(fecha_inicio_str, fecha_consulta)
     except Exception as e:
         st.error(f"Error en los datos ingresados: {e}")
         st.stop()
 
-    if f_fecha_corte.day >= 8:
-        ultimo_ipc_disponible = (f_fecha_corte - pd.DateOffset(months=1)).replace(day=1)
+    if fecha_consulta.day >= 8:
+        ultimo_ipc_disponible = (fecha_consulta - pd.DateOffset(months=1)).replace(day=1)
     else:
-        ultimo_ipc_disponible = (f_fecha_corte - pd.DateOffset(months=2)).replace(day=1)
+        ultimo_ipc_disponible = (fecha_consulta - pd.DateOffset(months=2)).replace(day=1)
 
     calendario_reajustes = (
-        utils.generar_calendario_clp(fecha_inicio_str, frecuencia_meses, f_fecha_corte)
+        utils.generar_calendario_clp(fecha_inicio_str, frecuencia_meses, fecha_consulta)
         if moneda_contrato == "CLP"
-        else utils.generar_calendario_uf(fecha_inicio_str, f_fecha_corte)
+        else utils.generar_calendario_uf(fecha_inicio_str, fecha_consulta)
     )
 
-    df_tramos_contrato, df_proy_hibrida, f_limite_efectivo = utils.calcular_historial_y_proyeccion_contrato(
+    df_tramos_contrato, df_proy_hibrida, fecha_limite_efectivo = utils.calcular_historial_y_proyeccion_contrato(
         calendario_df=calendario_reajustes,
-        df_ipc=df_ipc,
-        df_eee=df_eee,
-        ts_ipc=ts_ipc,
-        f_corte=f_fecha_corte,
-        f_ipc_real_limite=ultimo_ipc_disponible,
-        moneda_contrato=moneda_contrato,
-        col_eee=col_eee
+        df_ipc_input=df_ipc,
+        df_eee_input=df_eee,
+        ts_mensual_ipc_input=ts_ipc,
+        fecha_consulta=fecha_consulta,
+        fecha_disponible_IPCreal=ultimo_ipc_disponible
     )
 
     st.markdown("""
@@ -258,7 +318,7 @@ else:
     if not isinstance(df_uf.index, pd.DatetimeIndex):
         df_uf.index = pd.to_datetime(df_uf.index)
 
-    df_uf_hoy = df_uf[df_uf.index == f_fecha_corte].dropna(subset=["valor_uf"])
+    df_uf_hoy = df_uf[df_uf.index == fecha_consulta].dropna(subset=["valor_uf"])
     if not df_uf_hoy.empty:
         val_uf_hoy = float(df_uf_hoy["valor_uf"].iloc[-1])
     else:
@@ -400,7 +460,7 @@ else:
         res_puntual_clp, df_escenarios_clp = utils.calcular_montecarlo_clp(
             moneda_contrato=moneda_contrato,
             monto_base=monto_base,
-            f_fecha_corte=f_fecha_corte,
+            fecha_consulta_str=fecha_consulta,
             df_ipc=df_ipc,
             df_tramos_contrato=df_tramos_contrato,
             m_meses_faltantes=m_meses_val,
@@ -421,7 +481,7 @@ else:
             val_pes = nuevo_canon_estimado
             
     else:
-        df_uf_filtrado = df_uf[df_uf.index <= f_fecha_corte].dropna(subset=["valor_uf"])
+        df_uf_filtrado = df_uf[df_uf.index <= fecha_consulta].dropna(subset=["valor_uf"])
         if not df_uf_filtrado.empty:
             val_uf_periodo = float(df_uf_filtrado["valor_uf"].iloc[-1])
         else:
@@ -433,11 +493,11 @@ else:
         res_puntual_uf, df_escenarios_uf, mes_obj_uf, _ = utils.calcular_montecarlo_uf(
             moneda_contrato="UF",
             monto_base=monto_base,
-            f_fecha_corte=ultimo_ipc_disponible,
+            fecha_consulta_str=ultimo_ipc_disponible,
             df_trayectoria_mensual=df_tray_dummy,
             m_meses_faltantes=1,
             val_uf_periodo=val_uf_periodo,
-            mes_eee_aplicado=f_fecha_corte,
+            mes_eee_aplicado=fecha_consulta,
             df_proy_hibrida=df_proy_hibrida,
             resultados_backtest={'SARIMA': {'rmse_global_pct': 2.5}},
             rmse_ganador_pct=2.5
@@ -514,7 +574,8 @@ else:
             monto_base=monto_base,
             nuevo_monto_arriendo=None,
             ipc_total_periodo_actual=None,
-            df_uf=df_uf  
+            df_uf=df_uf,
+            fecha_consulta=fecha_consulta
         )
         if fig_uf:
             st.plotly_chart(fig_uf, use_container_width=True)
@@ -537,21 +598,35 @@ else:
         )
         if fig_abanico_clp:
             st.plotly_chart(fig_abanico_clp, use_container_width=True)
+            
     else:
         if 'df_escenarios_uf' in locals() and df_escenarios_uf is not None and not df_escenarios_uf.empty:
             fig_abanico_uf = utils.plot_plotly_abanico_uf(df_escenarios_uf=df_escenarios_uf)
             if fig_abanico_uf:
                 st.plotly_chart(fig_abanico_uf, use_container_width=True)
 
+    # =========================================================
+    # SECCIÓN INFORMATIVA (Ahora dentro del else, ocultada al inicio)
+    # =========================================================
     st.markdown("### 🧐 ¿Cómo interpretar los escenarios proyectados?")
     texto_extra_opt = ""
     if moneda_contrato == "CLP":
-        texto_extra_opt = "<br><span style='color: #5f6368; font-style: italic;'>(Ojo: por contrato, el canon no bajará de lo que ya pagas hoy).</span>"
+        texto_extra_opt = "<br><span style='color: #5f6368; font-style: italic;'>  (Ojo: por contrato, el canon no bajará de lo que ya pagas hoy. Si ves que baja, por favor avísame porque encontré un bug en la matriz 🪲. De hecho, es común que se proyecte al mismo nivel que el escenario Realista, pues existe esta restricción de no poder ser menor a él.).</span>"
 
     st.markdown(f"""
     <div style="background-color: #f8f9fa; padding: 18px; border-radius: 8px; border-left: 4px solid #332288; font-size: 13.5px; color: #333; line-height: 1.6; font-family: sans-serif;">
-        • <b>Escenario Optimista:</b> Contexto de menor inflación o estabilidad, donde el reajuste del arriendo se desacelera. {texto_extra_opt}<br><br>
-        • <b>Escenario Realista:</b> Proyección central basada en la trayectoria esperada del mercado y la frecuencia pactada.<br><br>
-        • <b>Escenario Pesimista:</b> Modela un escenario de mayor presión inflacionaria por sobre la tendencia promedio.
+        • <b>Escenario Optimista:</b> Representa un contexto de menor inflación o estabilidad, donde el reajuste del arriendo se desacelera y queda por debajo de la tendencia esperada. {texto_extra_opt}<br><br>
+        • <b>Escenario Realista:</b> Proyección central basada en la trayectoria esperada del mercado, los índices oficiales y la frecuencia pactada en tu contrato.<br><br>
+        • <b>Escenario Pesimista:</b> Modela un escenario de mayor presión inflacionaria, donde los reajustes superan la tendencia promedio, elevando el canon por sobre el escenario realista.
     </div>
     """, unsafe_allow_html=True)
+
+    with st.expander("ℹ️ Nota Metodológica y Definición de Escenarios (Detalle Técnico para TFM)"):
+        st.markdown(f"""
+        <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #332288; font-size: 13px; color: #333; line-height: 1.5; font-family: sans-serif;">
+            <b>Definición metodológica de escenarios estocásticos ({moneda_contrato}):</b><br><br>
+            • <b>Escenario optimista (P10 - Cota Inferior):</b> Se deriva del percentil 10 de las trayectorias simuladas mediante Montecarlo. Respeta estrictamente el principio de <b>nominalidad contractual</b>, fijando el canon en el nivel del tramo anterior cuando las iteraciones presentan reducciones nominales por deflación.<br><br>
+            • <b>Escenario pesimista (P90 - Cota Superior):</b> Captura la cola superior de la distribución simulada (percentil 90), modelando el riesgo de un régimen inflacionario severo y reajustes extraordinarios sin límites al alza.<br><br>
+            • <b>Calibración con RMSE:</b> La dispersión del proceso estocástico se fundamenta en el error empírico del modelo seleccionado en el backtest (RMSE = σ). No se aplican bandas arbitrarias; la incertidumbre simulada refleja la imprecisión histórica real del algoritmo, anclando los percentiles P10 y P90 a su capacidad predictiva.
+        </div>
+        """, unsafe_allow_html=True)
