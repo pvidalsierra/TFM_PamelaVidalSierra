@@ -13,6 +13,7 @@ Esta aplicación permite cargar datos económicos (IPC, UFCLP, USDCLP, EURCLP y 
 <br>
 Con estos datos se generan proyecciones mediante un modelo SARIMA, se construyen calendarios de reajustes en CLP y UF, y se simulan escenarios estocásticos de Montecarlo.
 <br>
+
 **Objetivo** <br>
 Entregar una herramienta interactiva para visualizar y analizar la evolución de contratos indexados a la inflación.
 <br>
@@ -25,14 +26,15 @@ Entregar una herramienta interactiva para visualizar y analizar la evolución de
 6. Simulación de Montecarlo: se obtienen escenarios futuros de proyección optimista, realista y pesimista.
 <br>
 
-**Forma de  Uso** 
+**Forma de  Uso** <br>
 1. El primer paso es seleccionar si se quiere acceder a la información de forma virtual, conectándose a la API del Banco Central de Chile o si es preferible utilizar los archivos locales. La opción local también es útil si por alguna razón la API del Banco se desconecta y es requerido consultar la información.
-2. Luego, para poder visualizar las métricas y proyecciones, es necesario ingresar las condiciones del contrato de arrendamiento:
+   En el caso de seleccionar la opción virtual, se encuentra programada - de forma segura - la conexión mediante token. 
+3. Luego, para poder visualizar las métricas y proyecciones, es necesario ingresar las condiciones del contrato de arrendamiento:
    a) Fecha de inicio del contrato: a través del calendario desplegable.
    b) Moneda del contrato: UF o CLP.
    c) Canon inicial de arriendo: monto en UF o CLP, dependiendo de la moneda. Este campo tiene un aviso de referencia del rango de montos que se pueden revisar (esto es un control más que nada).
    d) Frecuencia del reajuste en meses: frecuencia con la que se reajusta el contrato de arriendo. Si el contrato está en CLP: 3, 6 o 12 meses. Si el contrato está en UF, la UF se actualiza de forma diaria, pero por simplicidad, se programó la herramienta para que muestre todos los fines de mes. Por eso la frecuencia desaparece (no se puede seleccionar).
-3. Presionar botón "Calcular Reajuste" para poder visualizar todo el análisis desarrollado. 
+4. Presionar botón "Calcular Reajuste" para poder visualizar todo el análisis desarrollado. 
 <br>
 
 **Recomendación** 
