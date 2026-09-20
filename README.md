@@ -1,8 +1,11 @@
-# TFM_PamelaVidalSierra
-Trabajo de Final de Máster en Data Science, Big Data & Business Analytics - Universidad Complutense de Madrid (UCM).
-
+# Trabajo de Final de Máster en Data Science, Big Data & Business Analytics - Universidad Complutense de Madrid (UCM).
+<br>
+Autora: **Pamela Paz Vidal Sierra**.
+<br>
 Link de acceso a la herramienta montada en Streamlit:
 https://tfm-pvidalsierra-ucm.streamlit.app
+
+<br>
 
 **Descripción** <br>
 Esta aplicación permite cargar datos económicos (IPC, UFCLP, USDCLP, EURCLP y expectativas de inflación, desde archivos locales o directamente desde la API del Banco Central de Chile.
